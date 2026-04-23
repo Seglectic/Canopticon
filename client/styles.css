@@ -63,6 +63,20 @@ h1 {
   line-height: 1.1;
 }
 
+.brand {
+  display: inline-grid;
+  grid-template-columns: 38px auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.brand img {
+  width: 38px;
+  height: 38px;
+  display: block;
+  object-fit: contain;
+}
+
 .status {
   min-height: 1.25rem;
   margin-top: 5px;
