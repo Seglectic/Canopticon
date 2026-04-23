@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Canopticon</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/client/styles.css">
 </head>
 <body>
@@ -13,7 +14,11 @@
   </header>
 
   <main>
-    <section class="gallery" id="gallery"></section>
+    <section class="gallery view active" id="gallery"></section>
+    <section class="map-view view" id="mapView">
+      <div id="map"></div>
+      <div class="map-empty" id="mapEmpty">Photos with GPS metadata will appear here.</div>
+    </section>
     <section class="empty" id="empty">Add canopy photos to begin.</section>
   </main>
 
@@ -28,14 +33,19 @@
 
   <form class="upload-bar" id="uploadForm">
     <div class="upload-inner">
-      <div class="queue-note" id="queueNote"></div>
+      <div class="tabs" role="tablist" aria-label="Views">
+        <button class="tab active" id="galleryTab" type="button" role="tab" aria-selected="true">Gallery</button>
+        <button class="tab" id="mapTab" type="button" role="tab" aria-selected="false">Map</button>
+      </div>
       <label class="upload-button" for="files" title="Add photos">
         <span aria-hidden="true">+</span><span>Add Photos</span>
       </label>
       <input id="files" name="files" type="file" accept="image/*" multiple>
     </div>
+    <div class="queue-note" id="queueNote"></div>
   </form>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/client/app.js"></script>
 </body>
 </html>

@@ -448,6 +448,31 @@ def log_event(state: WebState, event: str, **fields: Any) -> None:
         file.write(json.dumps(record, sort_keys=True) + "\n")
 
 
+def read_latest_processing_results(event_log: Path) -> dict[str, dict[str, float]]:
+    results: dict[str, dict[str, float]] = {}
+    if not event_log.exists():
+        return results
+
+    with event_log.open("r", encoding="utf-8") as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if record.get("event") != "processing_done":
+                continue
+            image_id = record.get("image_id")
+            occluded_pct = record.get("occluded_pct")
+            elapsed_s = record.get("elapsed_s")
+            if not image_id or occluded_pct is None:
+                continue
+            results[image_id] = {
+                "occluded_pct": float(occluded_pct),
+                "elapsed_s": float(elapsed_s) if elapsed_s is not None else 0.0,
+            }
+    return results
+
+
 async def save_upload_to_ingest(upload: UploadFile, ingest_dir: Path) -> tuple[Path, str, int]:
     filename = safe_filename(upload.filename)
     suffix = Path(filename).suffix.lower()
@@ -569,6 +594,7 @@ async def processing_worker(state: WebState) -> None:
 
 
 def index_existing_uploads(state: WebState) -> None:
+    prior_results = read_latest_processing_results(state.event_log)
     for upload_path in sorted(state.upload_dir.iterdir()):
         if not upload_path.is_file() or upload_path.suffix.lower() not in SUPPORTED_EXTS:
             continue
@@ -576,6 +602,7 @@ def index_existing_uploads(state: WebState) -> None:
         image_id = upload_path.stem
         result_path = state.result_dir / f"{image_id}_overlay.jpg"
         metadata = extract_photo_metadata(upload_path)
+        prior_result = prior_results.get(image_id, {})
         item = ImageItem(
             id=image_id,
             filename=upload_path.name,
@@ -583,6 +610,8 @@ def index_existing_uploads(state: WebState) -> None:
             status="done" if result_path.exists() else "queued",
             uploaded_url=f"/media/uploads/{upload_path.name}",
             result_url=f"/media/results/{result_path.name}" if result_path.exists() else None,
+            occluded_pct=prior_result.get("occluded_pct"),
+            elapsed_s=prior_result.get("elapsed_s"),
             gps_present=metadata["gps_present"],
             gps_latitude=metadata["gps_latitude"],
             gps_longitude=metadata["gps_longitude"],

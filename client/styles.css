@@ -76,11 +76,85 @@ main {
   padding: 10px 8px 108px;
 }
 
+.view {
+  display: none;
+}
+
+.view.active {
+  display: block;
+}
+
 .gallery {
-  display: grid;
   grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   grid-auto-flow: dense;
   gap: 4px;
+}
+
+.gallery.active {
+  display: grid;
+}
+
+.map-view {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - 178px);
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 10px 30px var(--shadow);
+}
+
+#map {
+  width: 100%;
+  height: 100%;
+}
+
+.map-empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 500;
+  width: min(260px, calc(100% - 32px));
+  transform: translate(-50%, -50%);
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--surface-alpha);
+  text-align: center;
+  box-shadow: 0 10px 30px var(--shadow);
+  pointer-events: none;
+}
+
+.map-empty.hidden {
+  display: none;
+}
+
+.leaflet-container {
+  font: inherit;
+  background: var(--surface);
+}
+
+.map-pin {
+  min-width: 42px;
+  min-height: 32px;
+  display: inline-grid;
+  place-items: center;
+  padding: 5px 8px;
+  border: 2px solid #f8f8f2;
+  border-radius: 999px 999px 999px 4px;
+  color: #282a36;
+  background: var(--accent);
+  box-shadow: 0 8px 18px var(--shadow);
+  font-size: 0.78rem;
+  font-weight: 950;
+  transform: rotate(-45deg);
+}
+
+.map-pin span {
+  transform: rotate(45deg);
 }
 
 .empty {
@@ -191,11 +265,46 @@ main {
   align-items: center;
 }
 
+.tabs {
+  justify-self: start;
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(74px, auto));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.tab {
+  min-height: 38px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 12px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.tab.active {
+  color: #f8f8f2;
+  background: var(--accent-strong);
+}
+
+.tab:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .queue-note {
-  min-height: 1.2rem;
+  width: min(1120px, 100%);
+  min-height: 1rem;
+  margin: 7px auto 0;
   min-width: 0;
   color: var(--muted);
-  font-size: 0.88rem;
+  font-size: 0.82rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -63,6 +63,8 @@ On a phone, open the host's LAN address with port `8009`.
 - The gallery updates over a WebSocket with `queued`, `processing`, `done`, `duplicate`, and `error` states.
 - Upload and processing lifecycle events are appended to `canopticon_data/events.ndjson`.
 - GPS EXIF metadata is checked after upload; the UI shows whether GPS was found.
+- A bottom-left map tab uses Leaflet with OpenStreetMap tiles to plot GPS-tagged uploads.
+- Map pins show the occlusion percentage and open the processed photo when tapped.
 
 ## Web UI files
 
