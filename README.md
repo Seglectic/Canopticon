@@ -55,12 +55,22 @@ On a phone, open the host's LAN address with port `8009`.
 ## Mobile upload flow
 
 - Select one or more photos with the bottom `Add Photos` button.
-- Uploads are written to `staging/` first.
+- Uploads are written to `canopticon_data/ingest/` first.
 - Each uploaded file is hashed.
 - Duplicate hashes are discarded and are not processed again.
 - New files move into `canopticon_data/uploads/` and enter a FIFO queue.
 - A single in-process worker runs the warmed ONNX model and writes overlays to `canopticon_data/results/`.
 - The gallery updates over a WebSocket with `queued`, `processing`, `done`, `duplicate`, and `error` states.
+- Upload and processing lifecycle events are appended to `canopticon_data/events.ndjson`.
+- GPS EXIF metadata is checked after upload; the UI shows whether GPS was found.
+
+## Web UI files
+
+The frontend lives in [`client/`](./client/) so the UI can be maintained without editing the Python server:
+
+- `client/index.html`
+- `client/styles.css`
+- `client/app.js`
 
 ## Shutdown behavior
 
@@ -71,29 +81,29 @@ The model session and processing worker live inside the `canopticon.py` process.
 The original folder workflow is still available as a subcommand:
 
 ```bash
-uv run python canopticon.py batch photos outputs
+uv run python canopticon.py batch path/to/photos outputs
 ```
 
 Run with explicit CPU mode:
 
 ```bash
-uv run python canopticon.py batch photos outputs --device cpu
+uv run python canopticon.py batch path/to/photos outputs --device cpu
 ```
 
 Prefer GPU if a supported ONNX Runtime GPU provider is installed, otherwise fall back to CPU:
 
 ```bash
-uv run python canopticon.py batch photos outputs --device auto
+uv run python canopticon.py batch path/to/photos outputs --device auto
 ```
 
 ## Runtime directories
 
 These are local runtime directories and are ignored by git:
 
-- `staging/`
 - `canopticon_data/`
-- `photos/`
 - `outputs/`
+
+`pyproject.toml`, `.python-version`, and `uv.lock` stay in the repository root because `uv` discovers project configuration there.
 
 ## Notes
 

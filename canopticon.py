@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import argparse
@@ -17,9 +18,11 @@ import uuid
 
 import cv2
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 import numpy as np
 import onnxruntime as ort
+from PIL import Image, ExifTags
 import uvicorn
 from huggingface_hub import hf_hub_download
 
@@ -38,9 +41,11 @@ LABEL_TEXT_THICKNESS = 2
 CPU_PROVIDER = "CPUExecutionProvider"
 DEFAULT_PORT = 8009
 DATA_DIR = Path("canopticon_data")
-STAGING_DIR = Path("staging")
+CLIENT_DIR = Path("client")
+INGEST_DIR = DATA_DIR / "ingest"
 UPLOAD_DIR = DATA_DIR / "uploads"
 RESULT_DIR = DATA_DIR / "results"
+EVENT_LOG = DATA_DIR / "events.ndjson"
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 PROVIDER_PRIORITY = {
     "nvidia": ["TensorrtExecutionProvider", "CUDAExecutionProvider", CPU_PROVIDER],
@@ -60,6 +65,9 @@ class ImageItem:
     result_url: str | None = None
     occluded_pct: float | None = None
     elapsed_s: float | None = None
+    gps_present: bool = False
+    gps_latitude: float | None = None
+    gps_longitude: float | None = None
     error: str | None = None
 
 
@@ -73,7 +81,9 @@ class WebConfig:
     device: str
     scale: float
     data_dir: Path
-    staging_dir: Path
+    ingest_dir: Path
+    client_dir: Path
+    event_log: Path
 
 
 class WebState:
@@ -81,6 +91,8 @@ class WebState:
         self.config = config
         self.upload_dir = config.data_dir / "uploads"
         self.result_dir = config.data_dir / "results"
+        self.ingest_dir = config.ingest_dir
+        self.event_log = config.event_log
         self.queue: asyncio.Queue[str | None] = asyncio.Queue()
         self.items: dict[str, ImageItem] = {}
         self.hash_to_id: dict[str, str] = {}
@@ -204,7 +216,6 @@ def make_overlay(
     sky_mask_8: np.ndarray,
     sky_threshold: int,
     alpha: float,
-    elapsed_s: float,
 ) -> tuple[np.ndarray, float]:
     # skyseg output: brighter = more sky likelihood
     sky_binary = sky_mask_8 >= sky_threshold
@@ -239,17 +250,14 @@ def make_overlay(
         text_height_px,
         LABEL_TEXT_THICKNESS,
     )
-    labels = [
-        f"Occluded: {occluded_pct:.1f}%",
-        f"Model: {elapsed_s:.2f}s",
-    ]
+    labels = [f"Occluded: {occluded_pct:.1f}%"]
     text_sizes = [
         cv2.getTextSize(label, font, font_scale, LABEL_TEXT_THICKNESS)[0]
         for label in labels
     ]
     text_width = max(width for width, _ in text_sizes)
     text_height = text_sizes[0][1]
-    total_text_height = (text_height * len(labels)) + (line_gap_px * (len(labels) - 1))
+    total_text_height = text_height
     x = padding_px
     y = padding_px
 
@@ -300,7 +308,7 @@ def process_image(
     sky_mask_8 = infer_mask(session, working_image)
     elapsed_s = time.perf_counter() - start_time
     overlay, occluded_pct = make_overlay(
-        working_image, sky_mask_8, sky_threshold, alpha, elapsed_s
+        working_image, sky_mask_8, sky_threshold, alpha
     )
     return overlay, occluded_pct, elapsed_s
 
@@ -398,15 +406,57 @@ def hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-async def save_upload_to_staging(upload: UploadFile, staging_dir: Path) -> tuple[Path, str, int]:
+def gps_decimal(values: Any, ref: str | None) -> float | None:
+    try:
+        degrees, minutes, seconds = values
+        decimal = float(degrees) + (float(minutes) / 60.0) + (float(seconds) / 3600.0)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    if ref in {"S", "W"}:
+        decimal *= -1
+    return decimal
+
+
+def extract_photo_metadata(path: Path) -> dict[str, Any]:
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            gps_ifd = exif.get_ifd(ExifTags.IFD.GPSInfo) if exif else {}
+    except Exception:
+        return {"gps_present": False, "gps_latitude": None, "gps_longitude": None}
+
+    if not gps_ifd:
+        return {"gps_present": False, "gps_latitude": None, "gps_longitude": None}
+
+    latitude = gps_decimal(gps_ifd.get(2), gps_ifd.get(1))
+    longitude = gps_decimal(gps_ifd.get(4), gps_ifd.get(3))
+    return {
+        "gps_present": latitude is not None and longitude is not None,
+        "gps_latitude": latitude,
+        "gps_longitude": longitude,
+    }
+
+
+def log_event(state: WebState, event: str, **fields: Any) -> None:
+    state.event_log.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+        **fields,
+    }
+    with state.event_log.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+async def save_upload_to_ingest(upload: UploadFile, ingest_dir: Path) -> tuple[Path, str, int]:
     filename = safe_filename(upload.filename)
     suffix = Path(filename).suffix.lower()
-    staging_path = staging_dir / f"{uuid.uuid4().hex}{suffix}"
+    ingest_path = ingest_dir / f"{uuid.uuid4().hex}{suffix}"
     digest = hashlib.sha256()
     size = 0
 
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    with staging_path.open("wb") as file:
+    ingest_dir.mkdir(parents=True, exist_ok=True)
+    with ingest_path.open("wb") as file:
         while True:
             chunk = await upload.read(1024 * 1024)
             if not chunk:
@@ -415,7 +465,7 @@ async def save_upload_to_staging(upload: UploadFile, staging_dir: Path) -> tuple
             digest.update(chunk)
             file.write(chunk)
 
-    return staging_path, digest.hexdigest(), size
+    return ingest_path, digest.hexdigest(), size
 
 
 def process_queued_item(
@@ -467,6 +517,7 @@ async def processing_worker(state: WebState) -> None:
                 item.error = None
                 payload = item_to_payload(item)
 
+            log_event(state, "processing_started", image_id=image_id, filename=item.filename)
             await broadcast(state, {"type": "item", "item": payload})
 
             upload_path = state.upload_dir / f"{image_id}{Path(item.filename).suffix.lower()}"
@@ -488,6 +539,13 @@ async def processing_worker(state: WebState) -> None:
                     item.status = "error"
                     item.error = str(exc)
                     payload = item_to_payload(item)
+                log_event(
+                    state,
+                    "processing_error",
+                    image_id=image_id,
+                    filename=item.filename,
+                    error=str(exc),
+                )
             else:
                 async with state.lock:
                     item.status = "done"
@@ -496,6 +554,14 @@ async def processing_worker(state: WebState) -> None:
                     item.elapsed_s = elapsed_s
                     item.error = None
                     payload = item_to_payload(item)
+                log_event(
+                    state,
+                    "processing_done",
+                    image_id=image_id,
+                    filename=item.filename,
+                    occluded_pct=round(occluded_pct, 4),
+                    elapsed_s=round(elapsed_s, 4),
+                )
 
             await broadcast(state, {"type": "item", "item": payload})
         finally:
@@ -509,6 +575,7 @@ def index_existing_uploads(state: WebState) -> None:
         digest = hash_file(upload_path)
         image_id = upload_path.stem
         result_path = state.result_dir / f"{image_id}_overlay.jpg"
+        metadata = extract_photo_metadata(upload_path)
         item = ImageItem(
             id=image_id,
             filename=upload_path.name,
@@ -516,6 +583,9 @@ def index_existing_uploads(state: WebState) -> None:
             status="done" if result_path.exists() else "queued",
             uploaded_url=f"/media/uploads/{upload_path.name}",
             result_url=f"/media/results/{result_path.name}" if result_path.exists() else None,
+            gps_present=metadata["gps_present"],
+            gps_latitude=metadata["gps_latitude"],
+            gps_longitude=metadata["gps_longitude"],
         )
         state.items[image_id] = item
         state.hash_to_id[digest] = image_id
@@ -523,302 +593,6 @@ def index_existing_uploads(state: WebState) -> None:
             state.queue.put_nowait(image_id)
 
 
-def html_page() -> str:
-    return """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Canopticon</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --ink: #182024;
-      --muted: #66737c;
-      --line: #d9e1e5;
-      --panel: #ffffff;
-      --wash: #f3f7f4;
-      --leaf: #28795d;
-      --sun: #e2a72e;
-      --mark: #ca3e47;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color: var(--ink);
-      background: var(--wash);
-      letter-spacing: 0;
-    }
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      padding: 18px 16px 12px;
-      background: rgba(243, 247, 244, 0.94);
-      border-bottom: 1px solid var(--line);
-      backdrop-filter: blur(12px);
-    }
-    h1 {
-      margin: 0;
-      font-size: 1.45rem;
-      line-height: 1.1;
-    }
-    .status {
-      margin-top: 6px;
-      color: var(--muted);
-      font-size: 0.92rem;
-    }
-    main {
-      width: min(920px, 100%);
-      margin: 0 auto;
-      padding: 16px 14px 112px;
-    }
-    .gallery {
-      display: grid;
-      gap: 12px;
-    }
-    .empty {
-      min-height: 58vh;
-      display: grid;
-      place-items: center;
-      text-align: center;
-      color: var(--muted);
-      padding: 24px;
-    }
-    .card {
-      overflow: hidden;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      box-shadow: 0 8px 22px rgba(24, 32, 36, 0.08);
-    }
-    .thumb {
-      width: 100%;
-      aspect-ratio: 4 / 3;
-      object-fit: cover;
-      display: block;
-      background: #dfe7e2;
-    }
-    .body {
-      display: grid;
-      gap: 8px;
-      padding: 12px;
-    }
-    .row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-    }
-    .name {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-weight: 700;
-    }
-    .pill {
-      flex: 0 0 auto;
-      border-radius: 999px;
-      padding: 5px 9px;
-      font-size: 0.78rem;
-      line-height: 1;
-      color: #fff;
-      background: var(--leaf);
-      text-transform: uppercase;
-    }
-    .pill.queued { background: var(--sun); color: #2a220f; }
-    .pill.processing { background: #3278a8; }
-    .pill.error { background: var(--mark); }
-    .meta {
-      color: var(--muted);
-      font-size: 0.9rem;
-      line-height: 1.35;
-    }
-    .upload-bar {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      z-index: 3;
-      padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
-      background: rgba(255, 255, 255, 0.94);
-      border-top: 1px solid var(--line);
-      backdrop-filter: blur(12px);
-    }
-    .upload-inner {
-      width: min(920px, 100%);
-      margin: 0 auto;
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 10px;
-      align-items: center;
-    }
-    .queue-note {
-      min-width: 0;
-      color: var(--muted);
-      font-size: 0.88rem;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .upload-button {
-      min-width: 152px;
-      min-height: 48px;
-      border: 0;
-      border-radius: 8px;
-      background: var(--leaf);
-      color: #fff;
-      font: inherit;
-      font-weight: 800;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      cursor: pointer;
-    }
-    .upload-button span:first-child {
-      width: 22px;
-      height: 22px;
-      display: inline-grid;
-      place-items: center;
-      border: 2px solid currentColor;
-      border-radius: 50%;
-      line-height: 1;
-      font-size: 1rem;
-    }
-    input[type="file"] { display: none; }
-    @media (min-width: 720px) {
-      .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      header { padding-left: 24px; padding-right: 24px; }
-      main { padding-left: 24px; padding-right: 24px; }
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Canopticon</h1>
-    <div class="status" id="status">Connecting...</div>
-  </header>
-  <main>
-    <section class="gallery" id="gallery"></section>
-    <section class="empty" id="empty">Add canopy photos to begin.</section>
-  </main>
-  <form class="upload-bar" id="uploadForm">
-    <div class="upload-inner">
-      <div class="queue-note" id="queueNote">Ready on port 8009</div>
-      <label class="upload-button" for="files" title="Add photos">
-        <span>+</span><span>Add Photos</span>
-      </label>
-      <input id="files" name="files" type="file" accept="image/*" multiple>
-    </div>
-  </form>
-  <script>
-    const gallery = document.querySelector("#gallery");
-    const empty = document.querySelector("#empty");
-    const statusEl = document.querySelector("#status");
-    const queueNote = document.querySelector("#queueNote");
-    const input = document.querySelector("#files");
-    const items = new Map();
-
-    function statusText(item) {
-      if (item.status === "done" && item.occluded_pct !== null) {
-        return `Occluded ${item.occluded_pct.toFixed(1)}% - Model ${item.elapsed_s.toFixed(2)}s`;
-      }
-      if (item.status === "error") return item.error || "Processing failed";
-      if (item.status === "processing") return "Processing";
-      return "Queued";
-    }
-
-    function cardImage(item) {
-      return item.result_url || item.uploaded_url;
-    }
-
-    function render() {
-      const list = Array.from(items.values()).reverse();
-      empty.style.display = list.length ? "none" : "grid";
-      gallery.innerHTML = list.map((item) => `
-        <article class="card">
-          <img class="thumb" src="${cardImage(item)}" alt="">
-          <div class="body">
-            <div class="row">
-              <div class="name">${escapeHtml(item.filename)}</div>
-              <div class="pill ${item.status}">${item.status}</div>
-            </div>
-            <div class="meta">${escapeHtml(statusText(item))}</div>
-          </div>
-        </article>
-      `).join("");
-
-      const queued = list.filter((item) => item.status === "queued" || item.status === "processing").length;
-      queueNote.textContent = queued ? `${queued} waiting or processing` : "Ready on port 8009";
-    }
-
-    function escapeHtml(value) {
-      return String(value).replace(/[&<>"']/g, (char) => ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#039;"
-      }[char]));
-    }
-
-    async function loadItems() {
-      const response = await fetch("/api/items");
-      const data = await response.json();
-      data.items.forEach((item) => items.set(item.id, item));
-      render();
-    }
-
-    function connect() {
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${proto}://${location.host}/ws`);
-      ws.addEventListener("open", () => { statusEl.textContent = "Live updates connected"; });
-      ws.addEventListener("close", () => {
-        statusEl.textContent = "Reconnecting...";
-        setTimeout(connect, 1200);
-      });
-      ws.addEventListener("message", (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === "snapshot") {
-          data.items.forEach((item) => items.set(item.id, item));
-        }
-        if (data.type === "item") {
-          items.set(data.item.id, data.item);
-        }
-        if (data.type === "duplicate") {
-          statusEl.textContent = `Duplicate skipped: ${data.filename}`;
-        }
-        render();
-      });
-    }
-
-    input.addEventListener("change", async () => {
-      if (!input.files.length) return;
-      queueNote.textContent = `Uploading ${input.files.length} photo${input.files.length === 1 ? "" : "s"}...`;
-      const formData = new FormData();
-      for (const file of input.files) formData.append("files", file);
-      input.value = "";
-
-      const response = await fetch("/api/upload", { method: "POST", body: formData });
-      if (!response.ok) {
-        statusEl.textContent = "Upload failed";
-        queueNote.textContent = "Ready on port 8009";
-        return;
-      }
-      const data = await response.json();
-      data.items.forEach((item) => items.set(item.id, item));
-      render();
-    });
-
-    loadItems();
-    connect();
-  </script>
-</body>
-</html>"""
 
 
 def media_response(directory: Path, filename: str) -> FileResponse:
@@ -834,9 +608,11 @@ def create_app(config: WebConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        config.staging_dir.mkdir(parents=True, exist_ok=True)
+        config.client_dir.mkdir(parents=True, exist_ok=True)
+        state.ingest_dir.mkdir(parents=True, exist_ok=True)
         state.upload_dir.mkdir(parents=True, exist_ok=True)
         state.result_dir.mkdir(parents=True, exist_ok=True)
+        log_event(state, "startup")
         state.session = await asyncio.to_thread(load_model, config.model_path, config.device)
         await asyncio.to_thread(warm_model, state.session)
         index_existing_uploads(state)
@@ -848,6 +624,7 @@ def create_app(config: WebConfig) -> FastAPI:
         finally:
             print("Shutting down Canopticon web app...", flush=True)
             state.accepting_uploads = False
+            log_event(state, "shutdown_started")
             await state.queue.put(None)
             if state.worker_task is not None:
                 try:
@@ -857,13 +634,15 @@ def create_app(config: WebConfig) -> FastAPI:
                     await asyncio.gather(state.worker_task, return_exceptions=True)
             state.session = None
             state.websockets.clear()
+            log_event(state, "shutdown_complete")
             print("Canopticon shutdown complete.", flush=True)
 
     app = FastAPI(title="Canopticon", lifespan=lifespan)
+    app.mount("/client", StaticFiles(directory=config.client_dir), name="client")
 
-    @app.get("/", response_class=HTMLResponse)
-    async def index() -> str:
-        return html_page()
+    @app.get("/")
+    async def index() -> FileResponse:
+        return FileResponse(config.client_dir / "index.html")
 
     @app.get("/api/items")
     async def get_items() -> JSONResponse:
@@ -885,11 +664,20 @@ def create_app(config: WebConfig) -> FastAPI:
                 await upload.close()
                 continue
 
-            staging_path, digest, size = await save_upload_to_staging(upload, config.staging_dir)
+            ingest_path, digest, size = await save_upload_to_ingest(upload, state.ingest_dir)
             await upload.close()
             if size == 0:
-                staging_path.unlink(missing_ok=True)
+                ingest_path.unlink(missing_ok=True)
                 continue
+            metadata = extract_photo_metadata(ingest_path)
+            log_event(
+                state,
+                "upload_received",
+                filename=original_name,
+                digest=digest,
+                size=size,
+                gps_present=metadata["gps_present"],
+            )
 
             async with state.lock:
                 duplicate_id = state.hash_to_id.get(digest)
@@ -903,13 +691,16 @@ def create_app(config: WebConfig) -> FastAPI:
                 else:
                     image_id = item_id_from_digest(digest, state.items)
                     upload_path = state.upload_dir / f"{image_id}{suffix}"
-                    staging_path.replace(upload_path)
+                    ingest_path.replace(upload_path)
                     item = ImageItem(
                         id=image_id,
                         filename=original_name,
                         digest=digest,
                         status="queued",
                         uploaded_url=f"/media/uploads/{upload_path.name}",
+                        gps_present=metadata["gps_present"],
+                        gps_latitude=metadata["gps_latitude"],
+                        gps_longitude=metadata["gps_longitude"],
                     )
                     state.items[image_id] = item
                     state.hash_to_id[digest] = image_id
@@ -917,7 +708,15 @@ def create_app(config: WebConfig) -> FastAPI:
                     existing = None
 
             if duplicate_id is not None:
-                staging_path.unlink(missing_ok=True)
+                ingest_path.unlink(missing_ok=True)
+                log_event(
+                    state,
+                    "upload_duplicate",
+                    filename=original_name,
+                    digest=digest,
+                    existing_id=duplicate_id,
+                    gps_present=metadata["gps_present"],
+                )
                 await broadcast(
                     state,
                     {
@@ -929,6 +728,14 @@ def create_app(config: WebConfig) -> FastAPI:
                 accepted.append(existing)
             else:
                 await state.queue.put(image_id)
+                log_event(
+                    state,
+                    "upload_queued",
+                    image_id=image_id,
+                    filename=original_name,
+                    digest=digest,
+                    gps_present=metadata["gps_present"],
+                )
                 await broadcast(state, {"type": "item", "item": accepted[-1]})
 
         return JSONResponse({"items": accepted, "duplicates": duplicates})
@@ -1005,7 +812,9 @@ def serve(args: argparse.Namespace) -> None:
         device=args.device,
         scale=args.scale,
         data_dir=args.data_dir,
-        staging_dir=args.staging_dir,
+        ingest_dir=args.ingest_dir,
+        client_dir=args.client_dir,
+        event_log=args.event_log,
     )
     app = create_app(config)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
@@ -1027,10 +836,22 @@ def main() -> None:
         help="Directory for managed uploads and results",
     )
     serve_parser.add_argument(
-        "--staging-dir",
+        "--ingest-dir",
         type=Path,
-        default=STAGING_DIR,
-        help="Directory for temporary uploaded files before hashing",
+        default=INGEST_DIR,
+        help="Directory for raw uploaded files before hash dedupe",
+    )
+    serve_parser.add_argument(
+        "--client-dir",
+        type=Path,
+        default=CLIENT_DIR,
+        help="Directory for web UI assets",
+    )
+    serve_parser.add_argument(
+        "--event-log",
+        type=Path,
+        default=EVENT_LOG,
+        help="NDJSON file for upload and processing events",
     )
     add_processing_options(serve_parser)
 

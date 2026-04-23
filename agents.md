@@ -46,30 +46,21 @@ Post-reboot, the active system service set was reduced to about 13 services.
 Fresh full-folder run on Pi 4B CPU:
 
 - command:
-  - `uv run python canopticon.py photos outputs/onnx2 --device cpu --scale 1.0`
+  - `uv run python canopticon.py batch path/to/photos outputs/onnx2 --device cpu --scale 1.0`
 - images processed: `46`
 - wall-clock time: about `280.1s`
 - per-image model time: about `4.62s` to `4.76s`
 
-Results were copied locally to:
-
-- [outputs/onnx2](/home/segger/Projects/Canopticon/outputs/onnx2)
-
-There is also an earlier smaller batch copied to:
-
-- [outputs/onnx](/home/segger/Projects/Canopticon/outputs/onnx)
+Older local `photos/` and `outputs/` folders were removed from the day-to-day workflow. The app now relies on web uploads and managed runtime storage under `canopticon_data/`.
 
 ## Overlay Changes Made
 
 The ONNX overlay in [canopticon.py](/home/segger/Projects/Canopticon/canopticon.py) was updated to:
 
 - scale the annotation box based on image size so it stays visually consistent across resolutions
-- add a second line showing per-image model inference time in seconds
+- show only the occlusion percentage in the rendered image
 
-The overlay now shows:
-
-- `Occluded: ...%`
-- `Model: ...s`
+The overlay now shows `Occluded: ...%`.
 
 ## Good Next Steps
 
@@ -88,28 +79,32 @@ The intended way forward is a self-hosted Pi appliance with a mobile-first web U
 - Explicit server command:
   - `uv run python canopticon.py serve --port 8009`
 - The app binds `0.0.0.0:8009` by default.
+- Frontend files live in [client/](/home/segger/Projects/Canopticon/client).
 - Startup loads the ONNX session once and warms it with a dummy image.
 - Processing uses one in-process FIFO worker and one ONNX session.
 - There are no detached model processes or daemonized workers; stopping `canopticon.py` stops the app and model owner.
 - The original folder processor remains available:
-  - `uv run python canopticon.py batch photos outputs`
+  - `uv run python canopticon.py batch path/to/photos outputs`
+- `pyproject.toml`, `.python-version`, and `uv.lock` stay in the repo root so `uv` can discover the project normally.
 
 ### Implemented upload workflow
 
 1. User uploads one or more photos from the web UI.
-2. Each file is written into `staging/` first.
-3. The staged file is hashed.
-4. Duplicate hashes are discarded from staging and are not processed again.
+2. Each file is written into `canopticon_data/ingest/` first.
+3. The ingested file is hashed and checked for GPS EXIF metadata.
+4. Duplicate hashes are discarded from ingest and are not processed again.
 5. New files move to `canopticon_data/uploads/`.
 6. New files enter the FIFO processing queue.
 7. Finished overlays are written to `canopticon_data/results/`.
 8. The browser receives WebSocket updates for `queued`, `processing`, `done`, `duplicate`, and `error` events.
+9. Upload, duplicate, processing, startup, and shutdown events append to `canopticon_data/events.ndjson`.
 
 ### Runtime directories
 
-- `staging/` is temporary upload scratch space.
+- `canopticon_data/ingest/` is temporary upload scratch space used before hash dedupe.
 - `canopticon_data/uploads/` stores managed originals.
 - `canopticon_data/results/` stores generated overlays.
+- `canopticon_data/events.ndjson` stores append-only lifecycle events.
 - These directories are ignored by git.
 
 ### Deployment shape
@@ -145,7 +140,7 @@ The intended way forward is a self-hosted Pi appliance with a mobile-first web U
 
 - Duplicate uploads should be rejected based on file hash.
 - Duplicates should not be processed again.
-- Duplicates should not remain in staging after detection.
+- Duplicates should not remain in ingest after detection.
 
 ### Current implementation priority
 

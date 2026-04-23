@@ -1,7 +1,7 @@
 [project]
 name = "canopticon"
 version = "0.1.0"
-description = "Batch canopy coverage estimation from photos using a sky segmentation ONNX model."
+description = "Mobile canopy coverage estimation from web-uploaded photos using a sky segmentation ONNX model."
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "fastapi>=0.136.0",
@@ -9,6 +9,7 @@ dependencies = [
     "numpy>=1.26.0,<3",
     "onnxruntime>=1.18.0",
     "opencv-python>=4.10.0",
+    "pillow>=12.2.0",
     "python-multipart>=0.0.26",
     "uvicorn>=0.46.0",
     "websockets>=16.0",

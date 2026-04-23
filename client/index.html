@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Canopticon</title>
+  <link rel="stylesheet" href="/client/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Canopticon</h1>
+    <div class="status" id="status">Connecting...</div>
+  </header>
+
+  <main>
+    <section class="gallery" id="gallery"></section>
+    <section class="empty" id="empty">Add canopy photos to begin.</section>
+  </main>
+
+  <dialog class="viewer" id="viewer">
+    <button class="viewer-close" id="viewerClose" type="button" aria-label="Close">x</button>
+    <img id="viewerImage" alt="">
+    <div class="viewer-meta">
+      <div class="viewer-title" id="viewerTitle"></div>
+      <div class="viewer-detail" id="viewerDetail"></div>
+    </div>
+  </dialog>
+
+  <form class="upload-bar" id="uploadForm">
+    <div class="upload-inner">
+      <div class="queue-note" id="queueNote"></div>
+      <label class="upload-button" for="files" title="Add photos">
+        <span aria-hidden="true">+</span><span>Add Photos</span>
+      </label>
+      <input id="files" name="files" type="file" accept="image/*" multiple>
+    </div>
+  </form>
+
+  <script src="/client/app.js"></script>
+</body>
+</html>
