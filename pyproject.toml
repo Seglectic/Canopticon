@@ -1,0 +1,14 @@
+[project]
+name = "canopticon"
+version = "0.1.0"
+description = "Batch canopy coverage estimation from photos using a sky segmentation ONNX model."
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "huggingface-hub>=0.32.0",
+    "numpy>=1.26.0,<3",
+    "onnxruntime>=1.18.0",
+    "opencv-python>=4.10.0",
+]
+
+[tool.uv]
+package = false

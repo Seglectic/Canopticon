@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local source images and generated analysis outputs
+photos/
+outputs/
+.remote_outputs/
