@@ -6,3 +6,5 @@ __pycache__/
 photos/
 outputs/
 .remote_outputs/
+staging/
+canopticon_data/

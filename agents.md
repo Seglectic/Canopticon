@@ -4,7 +4,7 @@ This file is a shared handoff for future agents working in this repo.
 
 ## Current Best Result
 
-- The ONNX sky segmentation pipeline in [canopticon.py](/home/segger/Projects/Canopy2/canopticon.py) runs reliably on the Raspberry Pi 4B (`zinger`).
+- The ONNX sky segmentation pipeline in [canopticon.py](/home/segger/Projects/Canopticon/canopticon.py) runs reliably on the Raspberry Pi 4B (`zinger`).
 - The Pi Zero 2 W was not a good fit for the same workload.
 - Current recommendation: use the Pi 4B CPU path as the baseline for product work.
 
@@ -53,15 +53,15 @@ Fresh full-folder run on Pi 4B CPU:
 
 Results were copied locally to:
 
-- [outputs/onnx2](/home/segger/Projects/Canopy2/outputs/onnx2)
+- [outputs/onnx2](/home/segger/Projects/Canopticon/outputs/onnx2)
 
 There is also an earlier smaller batch copied to:
 
-- [outputs/onnx](/home/segger/Projects/Canopy2/outputs/onnx)
+- [outputs/onnx](/home/segger/Projects/Canopticon/outputs/onnx)
 
 ## Overlay Changes Made
 
-The ONNX overlay in [canopticon.py](/home/segger/Projects/Canopy2/canopticon.py) was updated to:
+The ONNX overlay in [canopticon.py](/home/segger/Projects/Canopticon/canopticon.py) was updated to:
 
 - scale the annotation box based on image size so it stays visually consistent across resolutions
 - add a second line showing per-image model inference time in seconds
@@ -73,12 +73,44 @@ The overlay now shows:
 
 ## Good Next Steps
 
-- Build a UI around the ONNX-on-Pi-4B path first.
+- Exercise the new mobile web UI on the Pi 4B with real phone uploads.
 - If more performance is needed, test ONNX with `--scale 0.75` and `--scale 0.5` before changing models.
 
 ## Intended Product Direction
 
 The intended way forward is a self-hosted Pi appliance with a mobile-first web UI.
+
+## Current Web Implementation
+
+- [canopticon.py](/home/segger/Projects/Canopticon/canopticon.py) now hosts the web app directly.
+- Default command:
+  - `uv run python canopticon.py`
+- Explicit server command:
+  - `uv run python canopticon.py serve --port 8009`
+- The app binds `0.0.0.0:8009` by default.
+- Startup loads the ONNX session once and warms it with a dummy image.
+- Processing uses one in-process FIFO worker and one ONNX session.
+- There are no detached model processes or daemonized workers; stopping `canopticon.py` stops the app and model owner.
+- The original folder processor remains available:
+  - `uv run python canopticon.py batch photos outputs`
+
+### Implemented upload workflow
+
+1. User uploads one or more photos from the web UI.
+2. Each file is written into `staging/` first.
+3. The staged file is hashed.
+4. Duplicate hashes are discarded from staging and are not processed again.
+5. New files move to `canopticon_data/uploads/`.
+6. New files enter the FIFO processing queue.
+7. Finished overlays are written to `canopticon_data/results/`.
+8. The browser receives WebSocket updates for `queued`, `processing`, `done`, `duplicate`, and `error` events.
+
+### Runtime directories
+
+- `staging/` is temporary upload scratch space.
+- `canopticon_data/uploads/` stores managed originals.
+- `canopticon_data/results/` stores generated overlays.
+- These directories are ignored by git.
 
 ### Deployment shape
 
@@ -106,16 +138,8 @@ The intended way forward is a self-hosted Pi appliance with a mobile-first web U
 
 ### Upload and processing workflow
 
-1. User connects phone to the Pi Wi-Fi network.
-2. User opens `sky.local`.
-3. User uploads one or more photos from the phone.
-4. Each file is placed into a `staging` directory first.
-5. Each file is hashed.
-6. If the file is a duplicate, it is discarded and duplicates must not be reuploaded.
-7. Non-duplicate files enter the processing queue.
-8. The UI shows queued/loading entries for anything still being processed.
-9. The ONNX workflow processes images in queue order.
-10. The finished result image is displayed in the UI in place of the loading state.
+- The core app workflow is implemented in [canopticon.py](/home/segger/Projects/Canopticon/canopticon.py).
+- Remaining appliance work is Pi network setup, local hostname routing, and any service-level deployment.
 
 ### Duplicate handling
 

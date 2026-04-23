@@ -1,11 +1,8 @@
 # Canopticon
 
-Batch canopy/sky occlusion overlays for a folder of photos.
+Mobile-first canopy/sky occlusion processing with a local web UI.
 
-This project is configured to use the CPU-only `onnxruntime` package so it stays simple and portable across:
-
-- Arch Linux on x86_64
-- Apple Silicon Macs like a 2020 M1 MacBook
+Canopticon runs a small web server, warms the ONNX sky segmentation model at startup, and lets a phone upload photos for processing. The app is meant to run on a Raspberry Pi 4B or a development machine, with the current default listening on port `8009`.
 
 ## What `uv` does
 
@@ -31,39 +28,75 @@ Then from this folder run:
 uv sync
 ```
 
-That will create `.venv/` and install everything needed for this project.
+That creates `.venv/` and installs everything needed for this project.
 
-## Run it
+## Run the web app
 
-Put your source images into `photos/`, then run:
+Start Canopticon on port `8009`:
 
 ```bash
-uv run python canopticon.py photos outputs
+uv run python canopticon.py
 ```
 
-The output folder will contain one annotated overlay image per input image.
-
-## Useful commands
-
-Recreate the environment from the lockfile:
+Or run the explicit server command:
 
 ```bash
-uv sync --frozen
+uv run python canopticon.py serve --port 8009
+```
+
+Open this from the same machine:
+
+```text
+http://localhost:8009
+```
+
+On a phone, open the host's LAN address with port `8009`.
+
+## Mobile upload flow
+
+- Select one or more photos with the bottom `Add Photos` button.
+- Uploads are written to `staging/` first.
+- Each uploaded file is hashed.
+- Duplicate hashes are discarded and are not processed again.
+- New files move into `canopticon_data/uploads/` and enter a FIFO queue.
+- A single in-process worker runs the warmed ONNX model and writes overlays to `canopticon_data/results/`.
+- The gallery updates over a WebSocket with `queued`, `processing`, `done`, `duplicate`, and `error` states.
+
+## Shutdown behavior
+
+The model session and processing worker live inside the `canopticon.py` process. Stop the app with `Ctrl-C`; shutdown stops new uploads, signals the worker, releases the model session reference, and exits without leaving a detached model process behind.
+
+## Batch mode
+
+The original folder workflow is still available as a subcommand:
+
+```bash
+uv run python canopticon.py batch photos outputs
 ```
 
 Run with explicit CPU mode:
 
 ```bash
-uv run python canopticon.py photos outputs --device cpu
+uv run python canopticon.py batch photos outputs --device cpu
 ```
 
 Prefer GPU if a supported ONNX Runtime GPU provider is installed, otherwise fall back to CPU:
 
 ```bash
-uv run python canopticon.py photos outputs --device auto
+uv run python canopticon.py batch photos outputs --device auto
 ```
+
+## Runtime directories
+
+These are local runtime directories and are ignored by git:
+
+- `staging/`
+- `canopticon_data/`
+- `photos/`
+- `outputs/`
 
 ## Notes
 
-- CPU mode is the default and is the most reliable cross-platform setup here.
-- If you later want GPU acceleration, that should be treated as an optional platform-specific add-on, not the default install path.
+- CPU mode is the most reliable cross-platform setup.
+- If GPU acceleration is added later, treat it as an optional platform-specific install path.
+- The future appliance target is a Pi-hosted access point with a friendly local hostname such as `sky.local`.
