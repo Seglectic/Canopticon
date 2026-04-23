@@ -17,6 +17,7 @@ const markers = new Map();
 let activeView = "gallery";
 let map;
 let markerLayer;
+let lastMapFitKey = "";
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
@@ -59,6 +60,15 @@ function pinText(item) {
   return `${Math.round(item.occluded_pct)}%`;
 }
 
+function clusterText(cluster) {
+  const values = cluster.items
+    .map((item) => item.occluded_pct)
+    .filter((value) => typeof value === "number");
+  if (!values.length) return "...";
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return `${Math.round(average)}%`;
+}
+
 function itemHasGps(item) {
   return Boolean(
     item.gps_present &&
@@ -76,6 +86,10 @@ function openViewer(id) {
   viewer.showModal();
 }
 
+function mapFitKey(mapped) {
+  return mapped.map((item) => `${item.id}:${item.occluded_pct ?? ""}`).sort().join("|");
+}
+
 function ensureMap() {
   if (map || !window.L) return;
   map = L.map("map", {
@@ -87,10 +101,35 @@ function ensureMap() {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   }).addTo(map);
   markerLayer = L.layerGroup().addTo(map);
+  map.on("zoomend", () => renderMap(false));
   map.setView([20, 0], 2);
 }
 
-function renderMap() {
+function buildClusters(mapped) {
+  const radius = 72;
+  const clusters = [];
+  mapped.forEach((item) => {
+    const point = map.latLngToLayerPoint([item.gps_latitude, item.gps_longitude]);
+    let cluster = clusters.find((candidate) => point.distanceTo(candidate.point) <= radius);
+    if (!cluster) {
+      cluster = {
+        items: [],
+        point,
+        lat: 0,
+        lng: 0,
+      };
+      clusters.push(cluster);
+    }
+    cluster.items.push(item);
+    const count = cluster.items.length;
+    cluster.lat = ((cluster.lat * (count - 1)) + item.gps_latitude) / count;
+    cluster.lng = ((cluster.lng * (count - 1)) + item.gps_longitude) / count;
+    cluster.point = map.latLngToLayerPoint([cluster.lat, cluster.lng]);
+  });
+  return clusters;
+}
+
+function renderMap(allowFit = false) {
   ensureMap();
   if (!map || !markerLayer) return;
 
@@ -100,26 +139,55 @@ function renderMap() {
   mapEmpty.classList.toggle("hidden", mapped.length > 0);
 
   const bounds = [];
-  mapped.forEach((item) => {
-    const marker = L.marker([item.gps_latitude, item.gps_longitude], {
+  const clusters = buildClusters(mapped);
+  clusters.forEach((cluster) => {
+    const isCluster = cluster.items.length > 1;
+    const marker = L.marker([cluster.lat, cluster.lng], {
       icon: L.divIcon({
         className: "",
-        html: `<div class="map-pin"><span>${escapeHtml(pinText(item))}</span></div>`,
-        iconSize: [48, 40],
-        iconAnchor: [8, 32],
+        html: `
+          <div class="map-pin ${isCluster ? "cluster" : ""}">
+            <svg viewBox="0 0 64 72" aria-hidden="true" focusable="false">
+              <path class="map-pin-border" d="M32 1 C42 1 54 7 59 18 C65 31 60 48 46 58 C39 63 35 68 32 71 C29 68 25 63 18 58 C4 48 -1 31 5 18 C10 7 22 1 32 1 Z"></path>
+              <path class="map-pin-fill" d="M32 6 C40 6 50 11 54 20 C59 31 55 45 43 54 C37 59 34 63 32 66 C30 63 27 59 21 54 C9 45 5 31 10 20 C14 11 24 6 32 6 Z"></path>
+            </svg>
+            <span class="map-pin-value">${escapeHtml(clusterText(cluster))}</span>
+            ${isCluster ? `<span class="map-pin-count">${cluster.items.length}</span>` : ""}
+          </div>
+        `,
+        iconSize: [64, 72],
+        iconAnchor: [32, 70],
       }),
-      title: item.filename,
+      title: isCluster ? `${cluster.items.length} photos` : cluster.items[0].filename,
     });
-    marker.on("click", () => openViewer(item.id));
+    marker.on("click", () => {
+      if (!isCluster) {
+        openViewer(cluster.items[0].id);
+        return;
+      }
+      const clusterBounds = L.latLngBounds(
+        cluster.items.map((item) => [item.gps_latitude, item.gps_longitude])
+      );
+      if (clusterBounds.isValid()) {
+        map.fitBounds(clusterBounds, {
+          padding: [42, 42],
+          maxZoom: Math.min(map.getZoom() + 3, 18),
+        });
+      }
+    });
     marker.addTo(markerLayer);
-    markers.set(item.id, marker);
-    bounds.push([item.gps_latitude, item.gps_longitude]);
+    markers.set(cluster.items.map((item) => item.id).join("|"), marker);
+    bounds.push([cluster.lat, cluster.lng]);
   });
 
-  if (bounds.length === 1) {
+  const nextFitKey = mapFitKey(mapped);
+  const shouldFit = allowFit && nextFitKey !== lastMapFitKey;
+  if (shouldFit && bounds.length === 1) {
     map.setView(bounds[0], 16);
-  } else if (bounds.length > 1) {
+    lastMapFitKey = nextFitKey;
+  } else if (shouldFit && bounds.length > 1) {
     map.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
+    lastMapFitKey = nextFitKey;
   }
 }
 
@@ -133,7 +201,7 @@ function setView(view) {
   galleryTab.setAttribute("aria-selected", String(!showMap));
   mapTab.setAttribute("aria-selected", String(showMap));
   if (showMap) {
-    renderMap();
+    renderMap(true);
     setTimeout(() => map?.invalidateSize(), 50);
   }
 }

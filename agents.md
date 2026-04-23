@@ -82,6 +82,7 @@ The intended way forward is a self-hosted Pi appliance with a mobile-first web U
 - Frontend files live in [client/](/home/segger/Projects/Canopticon/client).
 - The frontend uses Leaflet with OpenStreetMap tiles for the map tab.
 - Map pins are built from GPS EXIF coordinates and display occlusion percentage when available.
+- Zoomed-out map pins cluster by screen distance and display the average occlusion percentage for the cluster.
 - Startup loads the ONNX session once and warms it with a dummy image.
 - Processing uses one in-process FIFO worker and one ONNX session.
 - There are no detached model processes or daemonized workers; stopping `canopticon.py` stops the app and model owner.

@@ -152,23 +152,57 @@ main {
 }
 
 .map-pin {
-  min-width: 42px;
-  min-height: 32px;
+  position: relative;
+  width: 64px;
+  height: 72px;
   display: inline-grid;
   place-items: center;
-  padding: 5px 8px;
-  border: 2px solid #f8f8f2;
-  border-radius: 999px 999px 999px 4px;
   color: #282a36;
-  background: var(--accent);
-  box-shadow: 0 8px 18px var(--shadow);
   font-size: 0.78rem;
   font-weight: 950;
-  transform: rotate(-45deg);
+  isolation: isolate;
 }
 
-.map-pin span {
-  transform: rotate(45deg);
+.map-pin svg {
+  position: absolute;
+  inset: 0;
+  width: 64px;
+  height: 72px;
+  z-index: -1;
+  filter: drop-shadow(0 8px 14px var(--shadow));
+}
+
+.map-pin-border {
+  fill: #f8f8f2;
+}
+
+.map-pin-fill {
+  fill: var(--accent);
+}
+
+.map-pin.cluster .map-pin-fill {
+  fill: var(--accent-strong);
+}
+
+.map-pin-value {
+  transform: translateY(-6px);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.map-pin-count {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  min-width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #f8f8f2;
+  border-radius: 999px;
+  color: #f8f8f2;
+  background: var(--red);
+  font-size: 0.68rem;
+  line-height: 1;
 }
 
 .empty {

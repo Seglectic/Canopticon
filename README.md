@@ -65,6 +65,7 @@ On a phone, open the host's LAN address with port `8009`.
 - GPS EXIF metadata is checked after upload; the UI shows whether GPS was found.
 - A bottom-left map tab uses Leaflet with OpenStreetMap tiles to plot GPS-tagged uploads.
 - Map pins show the occlusion percentage and open the processed photo when tapped.
+- When zoomed out, nearby map pins combine and show the average occlusion percentage for that area.
 
 ## Web UI files
 
