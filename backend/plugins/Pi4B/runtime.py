@@ -305,15 +305,16 @@ def crop_preview(frame: np.ndarray) -> Image.Image:
 
 
 def annotate_preview(frame: np.ndarray) -> Image.Image:
-    image = crop_preview(frame)
-    draw = ImageDraw.Draw(image)
-    banner = (14, 180, 226, 220)
-    draw.rounded_rectangle((30, 188, 210, 226), radius=14, fill=banner)
-    label = "Press to capture"
-    text_box = draw.textbbox((0, 0), label, font=SMALL_FONT)
-    text_width = text_box[2] - text_box[0]
-    draw.text(((DISPLAY_SIZE - text_width) / 2, 198), label, fill="white", font=SMALL_FONT)
-    return image
+    image = crop_preview(frame).convert("RGBA")
+    overlay = Image.new("RGBA", (DISPLAY_SIZE, DISPLAY_SIZE), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    grid_color = (210, 214, 220, 68)
+    first_third = DISPLAY_SIZE // 3
+    second_third = (DISPLAY_SIZE * 2) // 3
+    for position in (first_third, second_third):
+        draw.line((position, 18, position, DISPLAY_SIZE - 18), fill=grid_color, width=1)
+        draw.line((18, position, DISPLAY_SIZE - 18, position), fill=grid_color, width=1)
+    return Image.alpha_composite(image, overlay).convert("RGB")
 
 
 def status_card(background: tuple[int, int, int], title: str, body: str) -> Image.Image:
@@ -753,11 +754,13 @@ def main() -> None:
                     log_event("plugin_photo_mode_started")
                 else:
                     frame = preview.read()
+                    captured_preview = crop_preview(frame)
+                    current_screen = captured_preview
+                    display.show_image(current_screen)
                     image_bytes = encode_jpeg(frame)
                     filename = f"pi4b-{datetime.now().strftime('%Y%m%d-%H%M%S')}.jpg"
                     should_return_via_fade = True
-                    current_screen = status_card((224, 245, 232), "Saving Photo", "Uploading to Canopticon")
-                    display.show_image(current_screen)
+                    current_screen = play_capture_success_sequence(display, frame, wifi_qr)
                     try:
                         response = post_capture(image_bytes, filename)
                     except error.URLError as exc:
@@ -773,8 +776,6 @@ def main() -> None:
                             display.show_image(current_screen)
                             time.sleep(1.2)
                             should_return_via_fade = False
-                        else:
-                            current_screen = play_capture_success_sequence(display, frame, wifi_qr)
                     preview.close()
                     preview = None
                     mode = "wifi"
