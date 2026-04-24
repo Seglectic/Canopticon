@@ -91,7 +91,7 @@ h1 {
 main {
   width: min(1120px, 100%);
   margin: 0 auto;
-  padding: 10px 8px 108px;
+  padding: 10px 8px 140px;
 }
 
 .view {
@@ -115,46 +115,13 @@ main {
 .map-view {
   position: relative;
   width: 100%;
-  height: calc(100vh - 178px);
-  min-height: 420px;
+  height: min(720px, calc(100dvh - 244px));
+  min-height: 320px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 10px 30px var(--shadow);
-}
-
-.map-source-bar {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 600;
-  display: inline-flex;
-  gap: 6px;
-  padding: 6px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-alpha);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 10px 24px var(--shadow);
-}
-
-.map-source {
-  min-height: 34px;
-  border: 0;
-  border-radius: 8px;
-  padding: 0 11px;
-  color: var(--muted);
-  background: transparent;
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.map-source.active {
-  color: #f8f8f2;
-  background: var(--accent-strong);
 }
 
 #map {
@@ -336,8 +303,8 @@ main {
   bottom: 0;
   z-index: 3;
   display: grid;
-  gap: 8px;
-  padding: 8px 14px calc(12px + env(safe-area-inset-bottom));
+  gap: 0;
+  padding: 0 14px calc(12px + env(safe-area-inset-bottom));
   background: var(--surface-alpha);
   border-top: 1px solid var(--line);
   backdrop-filter: blur(14px);
@@ -346,24 +313,49 @@ main {
 }
 
 .tray-handle {
-  width: min(1120px, 100%);
-  min-height: 34px;
-  margin: 0 auto;
+  position: absolute;
+  left: 50%;
+  top: 0;
+  min-width: 150px;
+  min-height: 36px;
+  transform: translate(-50%, -60%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
   border: 0;
-  border-radius: 999px;
-  padding: 0 14px;
+  border-radius: 14px 14px 10px 10px;
+  padding: 0 16px;
   color: var(--muted);
-  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
   font: inherit;
   font-size: 0.78rem;
   font-weight: 900;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
+  box-shadow: 0 -2px 0 color-mix(in srgb, var(--line) 65%, transparent), 0 10px 24px var(--shadow);
+}
+
+.tray-handle::before,
+.tray-handle::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 20px;
+  height: 18px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  border-bottom: 1px solid var(--line);
+}
+
+.tray-handle::before {
+  left: -10px;
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+.tray-handle::after {
+  right: -10px;
+  clip-path: polygon(0 0, 100% 100%, 0 100%);
 }
 
 .tray-grip {
@@ -380,6 +372,9 @@ main {
   max-height: 160px;
   opacity: 1;
   transition: max-height 180ms ease, opacity 140ms ease;
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding-top: 16px;
 }
 
 .upload-bar.collapsed {
@@ -395,13 +390,14 @@ main {
   width: min(1120px, 100%);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto auto;
   gap: 10px;
   align-items: center;
+  justify-content: end;
 }
 
 .tabs {
-  justify-self: start;
+  justify-self: end;
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(74px, auto));
   gap: 4px;
@@ -465,7 +461,6 @@ main {
 
 .upload-button:hover,
 .tray-handle:hover,
-.map-source:hover,
 .tab:hover {
   filter: brightness(1.03);
 }

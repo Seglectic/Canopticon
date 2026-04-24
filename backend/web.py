@@ -407,12 +407,12 @@ def media_response(directory: Path, filename: str) -> FileResponse:
 
 
 def build_map_sources(state: WebState) -> tuple[list[dict[str, Any]], str]:
-    sources: list[dict[str, Any]] = []
-    default_source = "live-osm"
-
     florida_pmtiles = state.maps_dir / "florida.pmtiles"
-    if florida_pmtiles.exists():
-        sources.append(
+    if not florida_pmtiles.exists():
+        return [], "offline-florida"
+
+    return (
+        [
             {
                 "id": "offline-florida",
                 "label": "Offline Florida",
@@ -424,37 +424,9 @@ def build_map_sources(state: WebState) -> tuple[list[dict[str, Any]], str]:
                 "zoom": 6,
                 "max_zoom": 15,
             }
-        )
-        default_source = "offline-florida"
-
-    central_florida_pmtiles = state.maps_dir / "central-florida.pmtiles"
-    if central_florida_pmtiles.exists():
-        sources.append(
-            {
-                "id": "offline-central-florida",
-                "label": "Central Florida Detail",
-                "kind": "pmtiles",
-                "url": f"/maps/{central_florida_pmtiles.name}",
-                "default": False,
-                "bounds": [[27.0, -82.9], [29.5, -80.7]],
-                "center": [28.25, -81.7],
-                "zoom": 8,
-                "max_zoom": 15,
-            }
-        )
-
-    sources.append(
-        {
-            "id": "live-osm",
-            "label": "Live OSM",
-            "kind": "raster",
-            "url": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-            "default": default_source == "live-osm",
-            "attribution": '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-            "max_zoom": 19,
-        }
+        ],
+        "offline-florida",
     )
-    return sources, default_source
 
 
 def create_app(config: WebConfig) -> FastAPI:
