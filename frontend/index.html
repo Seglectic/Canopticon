@@ -40,6 +40,18 @@
   </dialog>
 
   <form class="upload-bar" id="uploadForm">
+    <button
+      class="tray-handle"
+      id="trayHandle"
+      type="button"
+      aria-expanded="true"
+      aria-controls="trayPanel"
+      aria-label="Collapse controls"
+    >
+      <span class="tray-grip" aria-hidden="true"></span>
+      <span class="tray-label" id="trayLabel">Hide Controls</span>
+    </button>
+    <div class="tray-panel" id="trayPanel">
     <div class="upload-inner">
       <div class="tabs" role="tablist" aria-label="Views">
         <button class="tab active" id="galleryTab" type="button" role="tab" aria-selected="true">Gallery</button>
@@ -51,6 +63,7 @@
       <input id="files" name="files" type="file" accept="image/*" multiple>
     </div>
     <div class="queue-note" id="queueNote"></div>
+    </div>
   </form>
 
   <script src="/frontend/vendor/leaflet.js"></script>

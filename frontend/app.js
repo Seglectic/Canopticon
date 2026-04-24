@@ -3,6 +3,9 @@ const empty = document.querySelector("#empty");
 const statusEl = document.querySelector("#status");
 const queueNote = document.querySelector("#queueNote");
 const input = document.querySelector("#files");
+const uploadForm = document.querySelector("#uploadForm");
+const trayHandle = document.querySelector("#trayHandle");
+const trayLabel = document.querySelector("#trayLabel");
 const galleryTab = document.querySelector("#galleryTab");
 const mapTab = document.querySelector("#mapTab");
 const mapView = document.querySelector("#mapView");
@@ -22,6 +25,7 @@ let lastMapFitKey = "";
 let mapConfig;
 let activeMapSourceId;
 let baseLayer;
+let controlsCollapsed = false;
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
@@ -273,6 +277,14 @@ function setView(view) {
   }
 }
 
+function setControlsCollapsed(collapsed) {
+  controlsCollapsed = collapsed;
+  uploadForm.classList.toggle("collapsed", collapsed);
+  trayHandle.setAttribute("aria-expanded", String(!collapsed));
+  trayHandle.setAttribute("aria-label", collapsed ? "Show controls" : "Collapse controls");
+  trayLabel.textContent = collapsed ? "Show Controls" : "Hide Controls";
+}
+
 function render() {
   const list = Array.from(items.values()).reverse();
   empty.style.display = list.length || activeView === "map" ? "none" : "grid";
@@ -353,6 +365,9 @@ mapSourceBar.addEventListener("click", (event) => {
   if (!button) return;
   applyMapSource(button.dataset.sourceId);
 });
+trayHandle.addEventListener("click", () => {
+  setControlsCollapsed(!controlsCollapsed);
+});
 
 input.addEventListener("change", async () => {
   if (!input.files.length) return;
@@ -373,4 +388,5 @@ input.addEventListener("change", async () => {
 });
 
 loadMapConfig().finally(loadItems);
+setControlsCollapsed(false);
 connect();
