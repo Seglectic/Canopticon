@@ -29,7 +29,7 @@ DISPLAY_DC_PIN = 25
 DISPLAY_RST_PIN = 27
 DISPLAY_MADCTL = 0x08
 BUTTON_PIN = 23
-BUTTON_DEBOUNCE_SEC = 0.25
+BUTTON_DEBOUNCE_SEC = 0.18
 SAFE_MARGIN = 20
 CAPTION_TOP = 193
 QR_BOX_SIZE = 152
@@ -345,6 +345,7 @@ class LedController:
     def __init__(self) -> None:
         self.available = LED_HELPER_PATH.exists()
         self.animation_process: subprocess.Popen[bytes] | None = None
+        self.transient_process: subprocess.Popen[bytes] | None = None
 
     def _spawn(self, command: str) -> subprocess.Popen[bytes] | None:
         if not self.available:
@@ -359,34 +360,47 @@ class LedController:
             log_event("plugin_led_error", command=command, error=str(exc))
             return None
 
+    def _stop_process(self, process: subprocess.Popen[bytes] | None) -> None:
+        if process is None:
+            return
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+
+    def _start_transient(self, command: str) -> None:
+        if self.animation_process is not None and self.animation_process.poll() is None:
+            return
+        self._stop_process(self.transient_process)
+        self.transient_process = self._spawn(command)
+
     def pulse_blue(self) -> None:
-        self._spawn("pulse-blue")
+        self._start_transient("pulse-blue")
 
     def pulse_green(self) -> None:
-        self._spawn("pulse-green")
+        self._start_transient("pulse-green")
 
     def page_glow(self) -> None:
-        self._spawn("page-glow")
+        self._start_transient("page-glow")
 
     def start_purple_chase(self) -> None:
         if self.animation_process is not None and self.animation_process.poll() is None:
             return
+        self._stop_process(self.transient_process)
+        self.transient_process = None
         self.animation_process = self._spawn("chase-purple")
 
     def stop_animation(self) -> None:
-        if self.animation_process is None:
-            return
-        if self.animation_process.poll() is None:
-            self.animation_process.terminate()
-            try:
-                self.animation_process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.animation_process.kill()
-                self.animation_process.wait(timeout=2)
+        self._stop_process(self.animation_process)
         self.animation_process = None
 
     def off(self) -> None:
         self.stop_animation()
+        self._stop_process(self.transient_process)
+        self.transient_process = None
         self._spawn("off")
 
 
@@ -419,10 +433,33 @@ def parse_lease_clients() -> set[tuple[str, str]]:
     return clients
 
 
+def parse_station_macs() -> set[str]:
+    result = subprocess.run(
+        ["sudo", "-n", "iw", "dev", AP_INTERFACE, "station", "dump"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return set()
+
+    macs: set[str] = set()
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("Station "):
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            macs.add(parts[1].lower())
+    return macs
+
+
 def current_clients() -> set[tuple[str, str]]:
     lease_clients = parse_lease_clients()
-    if lease_clients:
-        return lease_clients
+    lease_ip_by_mac = {mac: ip for ip, mac in lease_clients}
+    station_macs = parse_station_macs()
+    if station_macs:
+        return {(lease_ip_by_mac.get(mac, "unknown"), mac) for mac in station_macs}
 
     result = subprocess.run(
         ["ip", "neigh", "show", "dev", AP_INTERFACE],
@@ -492,14 +529,6 @@ def encode_jpeg(frame: np.ndarray) -> bytes:
     return buffer.getvalue()
 
 
-def wait_for_button_release() -> None:
-    start = time.monotonic()
-    while time.monotonic() - start < 1.5:
-        if GPIO.input(BUTTON_PIN) == GPIO.HIGH:
-            return
-        time.sleep(0.01)
-
-
 def screen_off_frame() -> Image.Image:
     return Image.new("RGB", (DISPLAY_SIZE, DISPLAY_SIZE), (0, 0, 0))
 
@@ -526,12 +555,14 @@ def main() -> None:
         caption="Web Portal",
         text_fill=(255, 255, 255),
     )
-    known_clients = current_clients()
+    known_clients: set[tuple[str, str]] = set()
     last_client_poll = 0.0
-    latest_clients = known_clients
+    latest_clients: set[tuple[str, str]] = set()
+    previous_clients: set[tuple[str, str]] = set()
     portal_until = 0.0
     mode = "boot"
     last_button_press = 0.0
+    previous_button_pressed = False
     boot_started_at = time.monotonic()
     boot_ready_logged = False
     current_screen = build_boot_frame(0.0)
@@ -564,13 +595,16 @@ def main() -> None:
                 time.sleep(0.05)
                 continue
 
-            button_activated = False
             button_pressed = GPIO.input(BUTTON_PIN) == GPIO.LOW
-            if button_pressed and (now - last_button_press) >= BUTTON_DEBOUNCE_SEC:
+            button_activated = (
+                button_pressed
+                and not previous_button_pressed
+                and (now - last_button_press) >= BUTTON_DEBOUNCE_SEC
+            )
+            previous_button_pressed = button_pressed
+            if button_activated:
                 last_button_press = now
-                wait_for_button_release()
                 last_button_activity = time.monotonic()
-                button_activated = True
                 if sleeping:
                     sleeping = False
                     mode = "wifi"
@@ -663,11 +697,12 @@ def main() -> None:
 
             if now - last_client_poll >= CLIENT_POLL_INTERVAL_SEC:
                 last_client_poll = now
+                previous_clients = latest_clients
                 latest_clients = current_clients()
 
-            new_clients = latest_clients - known_clients
+            new_clients = latest_clients - previous_clients
             if new_clients:
-                known_clients |= new_clients
+                known_clients = latest_clients
                 portal_until = time.monotonic() + 10.0
                 mode = "portal"
                 leds.pulse_blue()
@@ -682,6 +717,8 @@ def main() -> None:
                     portal_background,
                     portal_qr,
                 )
+            elif not latest_clients:
+                known_clients = set()
             elif mode == "portal" and time.monotonic() >= portal_until:
                 mode = "wifi"
                 current_screen = transition_qr_state(
