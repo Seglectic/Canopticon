@@ -44,7 +44,6 @@ PORTAL_BACKGROUND = (11, 72, 132)
 BOOT_BACKGROUND = (244, 247, 251)
 PROCESSING_POLL_INTERVAL_SEC = 0.8
 SLEEP_TIMEOUT_SEC = 120.0
-LEASES_PATH = Path(f"/var/lib/NetworkManager/dnsmasq-{AP_INTERFACE}.leases")
 
 BASE_URL = os.environ["CANOPTICON_PLUGIN_BASE_URL"]
 CAPTURE_URL = os.environ["CANOPTICON_PLUGIN_CAPTURE_URL"]
@@ -56,6 +55,7 @@ EVENT_LOG = Path(os.environ.get("CANOPTICON_PLUGIN_EVENT_LOG", "data/events.ndjs
 PLUGIN_ID = os.environ.get("CANOPTICON_PLUGIN_ID", "Pi4B")
 FRONTEND_DIR = Path(os.environ.get("CANOPTICON_PLUGIN_FRONTEND_DIR", "frontend"))
 LED_HELPER_PATH = Path(__file__).with_name("led_helper.py")
+LEASES_PATH = Path(f"/var/lib/NetworkManager/dnsmasq-{AP_INTERFACE}.leases")
 
 
 def log_event(event: str, **fields: Any) -> None:
