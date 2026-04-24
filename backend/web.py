@@ -581,6 +581,17 @@ def create_app(config: WebConfig) -> FastAPI:
         state.maps_dir.mkdir(parents=True, exist_ok=True)
         state.loop = asyncio.get_running_loop()
         log_event(state.event_log, "startup")
+        if config.plugin:
+            plugin = load_plugin(config.plugin)
+            context = PluginContext(
+                config=config,
+                event_log=state.event_log,
+                base_url=f"http://127.0.0.1:{config.port}",
+                capture_token=state.plugin_capture_token,
+            )
+            plugin.start(context)
+            state.plugin = plugin
+            log_event(state.event_log, "plugin_started", plugin=plugin.plugin_id)
         try:
             offline_map = await asyncio.to_thread(ensure_state_map, state.maps_dir, state.config.map_state)
         except Exception as exc:
@@ -603,18 +614,7 @@ def create_app(config: WebConfig) -> FastAPI:
         await asyncio.to_thread(warm_model, state.session)
         index_existing_uploads(state)
         state.accepting_uploads = True
-        if config.plugin:
-            plugin = load_plugin(config.plugin)
-            context = PluginContext(
-                config=config,
-                event_log=state.event_log,
-                base_url=f"http://127.0.0.1:{config.port}",
-                capture_token=state.plugin_capture_token,
-            )
-            plugin.start(context)
-            state.plugin = plugin
-            log_event(state.event_log, "plugin_started", plugin=plugin.plugin_id)
-        else:
+        if not config.plugin:
             start_gpio_trigger_helper(state)
         state.worker_task = asyncio.create_task(processing_worker(state))
         print(f"Canopticon web app listening on http://{config.host}:{config.port}", flush=True)

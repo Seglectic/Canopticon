@@ -28,6 +28,7 @@ class Pi4BPlugin(ManagedPlugin):
             "CANOPTICON_PLUGIN_AP_INTERFACE": "wlan0",
             "CANOPTICON_PLUGIN_EVENT_LOG": str(context.event_log),
             "CANOPTICON_PLUGIN_ID": self.plugin_id,
+            "CANOPTICON_PLUGIN_FRONTEND_DIR": str(context.config.frontend_dir),
         }
         self.process = subprocess.Popen(
             ["/usr/bin/python3", str(runtime_path)],

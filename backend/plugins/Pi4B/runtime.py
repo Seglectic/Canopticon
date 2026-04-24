@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import io
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -29,9 +30,13 @@ DISPLAY_RST_PIN = 27
 DISPLAY_MADCTL = 0x08
 BUTTON_PIN = 23
 BUTTON_DEBOUNCE_SEC = 0.25
-CAPTION_Y = 204
-QR_BOX_SIZE = 184
+SAFE_MARGIN = 20
+CAPTION_TOP = 193
+QR_BOX_SIZE = 152
 PREVIEW_SIZE = (1280, 720)
+LOGO_WIDTH = 84
+LOGO_BOB_AMPLITUDE = 8
+LOGO_BOB_PERIOD_SEC = 1.8
 
 BASE_URL = os.environ["CANOPTICON_PLUGIN_BASE_URL"]
 CAPTURE_URL = os.environ["CANOPTICON_PLUGIN_CAPTURE_URL"]
@@ -41,6 +46,7 @@ AP_SSID = os.environ.get("CANOPTICON_PLUGIN_AP_SSID", "Canopticon")
 AP_INTERFACE = os.environ.get("CANOPTICON_PLUGIN_AP_INTERFACE", "wlan0")
 EVENT_LOG = Path(os.environ.get("CANOPTICON_PLUGIN_EVENT_LOG", "data/events.ndjson"))
 PLUGIN_ID = os.environ.get("CANOPTICON_PLUGIN_ID", "Pi4B")
+FRONTEND_DIR = Path(os.environ.get("CANOPTICON_PLUGIN_FRONTEND_DIR", "frontend"))
 
 
 def log_event(event: str, **fields: Any) -> None:
@@ -178,6 +184,8 @@ class CameraPreview:
 
 def load_font(size: int) -> ImageFont.ImageFont:
     for candidate in (
+        FRONTEND_DIR / "assets" / "fonts" / "oxanium-700.ttf",
+        FRONTEND_DIR / "assets" / "fonts" / "oxanium-500.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ):
@@ -187,8 +195,34 @@ def load_font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-FONT = load_font(20)
-SMALL_FONT = load_font(16)
+FONT = load_font(18)
+SMALL_FONT = load_font(14)
+
+
+def load_logo() -> Image.Image | None:
+    logo_path = FRONTEND_DIR / "assets" / "canopticon-logo.png"
+    if not logo_path.exists():
+        return None
+    image = Image.open(logo_path).convert("RGBA")
+    width, height = image.size
+    target_height = round((LOGO_WIDTH / width) * height)
+    return image.resize((LOGO_WIDTH, target_height), Image.Resampling.LANCZOS)
+
+
+LOGO = load_logo()
+
+
+def draw_centered_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    *,
+    y: int,
+    font: ImageFont.ImageFont,
+    fill: str | tuple[int, int, int],
+) -> None:
+    text_box = draw.textbbox((0, 0), text, font=font)
+    text_width = text_box[2] - text_box[0]
+    draw.text(((DISPLAY_SIZE - text_width) / 2, y), text, fill=fill, font=font)
 
 
 def build_qr_image(payload: str, *, background: tuple[int, int, int], caption: str) -> Image.Image:
@@ -196,16 +230,39 @@ def build_qr_image(payload: str, *, background: tuple[int, int, int], caption: s
     qr = qrcode.QRCode(border=1, box_size=8)
     qr.add_data(payload)
     qr.make(fit=True)
-    qr_image = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    qr_image = qr.make_image(fill_color="black", back_color=background).convert("RGB")
     qr_image = qr_image.resize((QR_BOX_SIZE, QR_BOX_SIZE), Image.Resampling.NEAREST)
     qr_x = (DISPLAY_SIZE - QR_BOX_SIZE) // 2
-    canvas.paste(qr_image, (qr_x, 10))
+    qr_y = SAFE_MARGIN + 6
+    canvas.paste(qr_image, (qr_x, qr_y))
 
     draw = ImageDraw.Draw(canvas)
-    text_box = draw.textbbox((0, 0), caption, font=FONT)
-    text_width = text_box[2] - text_box[0]
-    draw.text(((DISPLAY_SIZE - text_width) / 2, CAPTION_Y), caption, fill="black", font=FONT)
+    draw_centered_text(draw, caption, y=CAPTION_TOP, font=FONT, fill="black")
     return canvas
+
+
+def build_boot_frame(phase: float) -> Image.Image:
+    background = (244, 247, 251)
+    canvas = Image.new("RGBA", (DISPLAY_SIZE, DISPLAY_SIZE), background + (255,))
+    draw = ImageDraw.Draw(canvas)
+    bob_offset = round(math.sin(phase * math.tau) * LOGO_BOB_AMPLITUDE)
+
+    if LOGO is not None:
+        logo_x = (DISPLAY_SIZE - LOGO.width) // 2
+        logo_y = 52 + bob_offset
+        canvas.alpha_composite(LOGO, (logo_x, logo_y))
+
+    draw_centered_text(draw, "Canopticon", y=156, font=FONT, fill=(16, 24, 32))
+    draw_centered_text(draw, "Starting up", y=180, font=SMALL_FONT, fill=(85, 100, 115))
+
+    dot_y = 208
+    for index in range(3):
+        dot_phase = (phase * math.tau) - (index * 0.7)
+        radius = 4 + max(0, math.sin(dot_phase)) * 2
+        x = 102 + (index * 18)
+        draw.ellipse((x - radius, dot_y - radius, x + radius, dot_y + radius), fill=(19, 146, 204))
+
+    return canvas.convert("RGB")
 
 
 def crop_preview(frame: np.ndarray) -> Image.Image:
@@ -233,12 +290,8 @@ def annotate_preview(frame: np.ndarray) -> Image.Image:
 def status_card(background: tuple[int, int, int], title: str, body: str) -> Image.Image:
     canvas = Image.new("RGB", (DISPLAY_SIZE, DISPLAY_SIZE), background)
     draw = ImageDraw.Draw(canvas)
-    title_box = draw.textbbox((0, 0), title, font=FONT)
-    title_width = title_box[2] - title_box[0]
-    draw.text(((DISPLAY_SIZE - title_width) / 2, 86), title, fill="black", font=FONT)
-    body_box = draw.textbbox((0, 0), body, font=SMALL_FONT)
-    body_width = body_box[2] - body_box[0]
-    draw.text(((DISPLAY_SIZE - body_width) / 2, 118), body, fill="black", font=SMALL_FONT)
+    draw_centered_text(draw, title, y=86, font=FONT, fill="black")
+    draw_centered_text(draw, body, y=118, font=SMALL_FONT, fill="black")
     return canvas
 
 
@@ -280,6 +333,14 @@ def post_capture(image_bytes: bytes, filename: str) -> dict[str, Any]:
     return json.loads(payload) if payload else {}
 
 
+def server_ready() -> bool:
+    try:
+        with request.urlopen(f"{BASE_URL}/api/items", timeout=1.5) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
 def encode_jpeg(frame: np.ndarray) -> bytes:
     image = Image.fromarray(frame, mode="RGB")
     buffer = io.BytesIO()
@@ -312,17 +373,32 @@ def main() -> None:
         background=(197, 235, 255),
         caption="Web Portal",
     )
-    display.show_image(wifi_qr)
     known_clients = current_clients()
     portal_until = 0.0
-    mode = "wifi"
+    mode = "boot"
     last_button_press = 0.0
+    boot_started_at = time.monotonic()
+    boot_ready_logged = False
 
     log_event("plugin_runtime_started", ap_ssid=AP_SSID, portal_url=PORTAL_URL)
 
     try:
         while True:
             now = time.monotonic()
+            if mode == "boot":
+                if server_ready():
+                    if not boot_ready_logged:
+                        log_event("plugin_runtime_ready")
+                        boot_ready_logged = True
+                    mode = "wifi"
+                    display.show_image(wifi_qr)
+                    time.sleep(0.15)
+                    continue
+                phase = ((now - boot_started_at) % LOGO_BOB_PERIOD_SEC) / LOGO_BOB_PERIOD_SEC
+                display.show_image(build_boot_frame(phase))
+                time.sleep(0.05)
+                continue
+
             button_pressed = GPIO.input(BUTTON_PIN) == GPIO.LOW
             if button_pressed and (now - last_button_press) >= BUTTON_DEBOUNCE_SEC:
                 last_button_press = now
