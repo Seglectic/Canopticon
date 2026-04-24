@@ -40,13 +40,15 @@
   </main>
 
   <dialog class="viewer" id="viewer">
-    <button class="viewer-delete" id="viewerDelete" type="button" aria-label="Delete photo">
-      <span class="icon icon-trash" aria-hidden="true"></span>
-    </button>
-    <button class="viewer-close" id="viewerClose" type="button" aria-label="Close">
-      <span class="icon icon-close" aria-hidden="true"></span>
-    </button>
-    <img id="viewerImage" alt="">
+    <div class="viewer-media">
+      <button class="viewer-delete" id="viewerDelete" type="button" aria-label="Delete photo">
+        <span class="icon icon-trash" aria-hidden="true"></span>
+      </button>
+      <button class="viewer-close" id="viewerClose" type="button" aria-label="Close">
+        <span class="icon icon-close" aria-hidden="true"></span>
+      </button>
+      <img id="viewerImage" alt="">
+    </div>
     <div class="viewer-meta">
       <div class="viewer-header">
         <div class="viewer-stat-value" id="viewerStatValue">--</div>
