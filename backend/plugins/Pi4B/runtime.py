@@ -44,13 +44,14 @@ FADE_FRAME_DELAY_SEC = 0.035
 WIFI_BACKGROUND = (255, 255, 255)
 PORTAL_BACKGROUND = (11, 72, 132)
 BOOT_BACKGROUND = (244, 247, 251)
-BRAND_BACKGROUND = (244, 247, 251)
+IRIS_OVERLAY = (8, 10, 16)
 PROCESSING_POLL_INTERVAL_SEC = 0.8
 CLIENT_POLL_INTERVAL_SEC = 1.0
 SLEEP_TIMEOUT_SEC = 120.0
 IDLE_LOOP_DELAY_SEC = 0.05
 IRIS_STEPS = 14
 IRIS_FRAME_DELAY_SEC = 0.03
+BRAND_HOLD_SEC = 3.0
 
 BASE_URL = os.environ["CANOPTICON_PLUGIN_BASE_URL"]
 CAPTURE_URL = os.environ["CANOPTICON_PLUGIN_CAPTURE_URL"]
@@ -324,7 +325,7 @@ def status_card(background: tuple[int, int, int], title: str, body: str) -> Imag
 
 
 def build_brand_frame() -> Image.Image:
-    canvas = Image.new("RGBA", (DISPLAY_SIZE, DISPLAY_SIZE), BRAND_BACKGROUND + (255,))
+    canvas = Image.new("RGBA", (DISPLAY_SIZE, DISPLAY_SIZE), IRIS_OVERLAY + (255,))
     draw = ImageDraw.Draw(canvas)
     if LOGO is not None:
         brand_logo = LOGO.resize(
@@ -334,8 +335,8 @@ def build_brand_frame() -> Image.Image:
         logo_x = (DISPLAY_SIZE - brand_logo.width) // 2
         canvas.alpha_composite(brand_logo, (logo_x, 54))
 
-    draw_centered_text(draw, "Seglectic", y=144, font=FONT, fill=(16, 24, 32))
-    draw_centered_text(draw, "Systems", y=168, font=FONT, fill=(56, 72, 88))
+    draw_centered_text(draw, "Seglectic", y=144, font=FONT, fill=(248, 250, 255))
+    draw_centered_text(draw, "Systems", y=168, font=FONT, fill=(145, 198, 255))
     return canvas.convert("RGB")
 
 
@@ -343,12 +344,13 @@ def iris_close_sequence(
     display: GC9A01Display,
     source_image: Image.Image,
     *,
-    overlay: tuple[int, int, int] = (8, 10, 16),
+    overlay: tuple[int, int, int] = IRIS_OVERLAY,
 ) -> Image.Image:
     source = source_image.convert("RGB")
     max_radius = math.sqrt(2) * DISPLAY_SIZE / 2
     for step in range(IRIS_STEPS):
         progress = (step + 1) / IRIS_STEPS
+        progress = progress * progress
         radius = max_radius * (1.0 - progress)
         frame = Image.new("RGB", (DISPLAY_SIZE, DISPLAY_SIZE), overlay)
         mask = Image.new("L", (DISPLAY_SIZE, DISPLAY_SIZE), 0)
@@ -380,7 +382,7 @@ def play_capture_success_sequence(
     current = iris_close_sequence(display, iris_source)
     brand_frame = build_brand_frame()
     current = blend_sequence(display, current, brand_frame)
-    time.sleep(0.4)
+    time.sleep(BRAND_HOLD_SEC)
     return blend_sequence(display, current, return_screen)
 
 
