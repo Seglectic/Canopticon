@@ -296,6 +296,7 @@ def wait_for_button_release() -> None:
 
 
 def main() -> None:
+    GPIO.setwarnings(False)
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
