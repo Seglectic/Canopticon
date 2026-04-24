@@ -11,6 +11,7 @@ class ImageItem:
     digest: str
     status: str
     uploaded_url: str
+    thumb_url: str | None = None
     result_url: str | None = None
     occluded_pct: float | None = None
     elapsed_s: float | None = None

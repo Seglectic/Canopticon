@@ -13,6 +13,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 RESULT_DIR = DATA_DIR / "results"
 MAPS_DIR = DATA_DIR / "maps"
 EVENT_LOG = DATA_DIR / "events.ndjson"
+DEFAULT_THUMBNAIL_SIZE = 200
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
 
@@ -30,3 +31,4 @@ class WebConfig:
     frontend_dir: Path
     event_log: Path
     maps_dir: Path
+    thumbnail_size: int

@@ -19,6 +19,7 @@ from .inference import load_model, process_image_file, warm_model
 from .models import ImageItem, item_to_payload
 from .settings import SUPPORTED_EXTS, WebConfig
 from .storage import (
+    create_thumbnail,
     extract_photo_metadata,
     hash_file,
     item_id_from_digest,
@@ -32,6 +33,20 @@ from .storage import (
 GPIO_TRIGGER_PIN = 17
 GPIO_TRIGGER_LABEL = "GPIO17 to GND"
 GPIO_CAPTURE_SOURCE = "gpio-trigger"
+
+def no_cache_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+
+class FrontendStaticFiles(StaticFiles):
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers.update(no_cache_headers())
+        return response
 
 
 class WebState:
@@ -116,7 +131,13 @@ async def register_ingested_photo(
         else:
             image_id = item_id_from_digest(digest, state.items)
             upload_path = state.upload_dir / f"{image_id}{Path(original_name).suffix.lower()}"
+            thumb_path = state.result_dir / f"{image_id}_thumb.jpg"
             ingest_path.replace(upload_path)
+            try:
+                await asyncio.to_thread(create_thumbnail, upload_path, thumb_path, size=state.config.thumbnail_size)
+                thumb_url = f"/media/results/{thumb_path.name}"
+            except Exception:
+                thumb_url = None
             created_item = build_item(
                 image_id=image_id,
                 filename=original_name,
@@ -124,6 +145,7 @@ async def register_ingested_photo(
                 uploaded_url=f"/media/uploads/{upload_path.name}",
                 metadata=metadata,
             )
+            created_item.thumb_url = thumb_url
             state.items[image_id] = created_item
             state.hash_to_id[digest] = image_id
             existing = item_to_payload(created_item)
@@ -320,9 +342,17 @@ async def processing_worker(state: WebState) -> None:
 
             upload_path = state.upload_dir / f"{image_id}{Path(item.filename).suffix.lower()}"
             result_path = state.result_dir / f"{image_id}_overlay.jpg"
+            thumb_path = state.result_dir / f"{image_id}_thumb.jpg"
             try:
                 if state.session is None:
                     raise RuntimeError("Model session is not loaded")
+                if not thumb_path.exists():
+                    await asyncio.to_thread(
+                        create_thumbnail,
+                        upload_path,
+                        thumb_path,
+                        size=state.config.thumbnail_size,
+                    )
                 occluded_pct, elapsed_s = await asyncio.to_thread(
                     process_queued_item,
                     state.session,
@@ -331,6 +361,12 @@ async def processing_worker(state: WebState) -> None:
                     state.config.sky_threshold,
                     state.config.alpha,
                     state.config.scale,
+                )
+                await asyncio.to_thread(
+                    create_thumbnail,
+                    result_path,
+                    thumb_path,
+                    size=state.config.thumbnail_size,
                 )
             except Exception as exc:
                 async with state.lock:
@@ -347,6 +383,7 @@ async def processing_worker(state: WebState) -> None:
             else:
                 async with state.lock:
                     item.status = "done"
+                    item.thumb_url = f"/media/results/{thumb_path.name}" if thumb_path.exists() else item.thumb_url
                     item.result_url = f"/media/results/{result_path.name}"
                     item.occluded_pct = occluded_pct
                     item.elapsed_s = elapsed_s
@@ -374,14 +411,24 @@ def index_existing_uploads(state: WebState) -> None:
         digest = hash_file(upload_path)
         image_id = upload_path.stem
         result_path = state.result_dir / f"{image_id}_overlay.jpg"
+        thumb_path = state.result_dir / f"{image_id}_thumb.jpg"
         metadata = extract_photo_metadata(upload_path)
         prior_result = prior_results.get(image_id, {})
+        try:
+            create_thumbnail(
+                result_path if result_path.exists() else upload_path,
+                thumb_path,
+                size=state.config.thumbnail_size,
+            )
+        except Exception:
+            pass
         item = ImageItem(
             id=image_id,
             filename=upload_path.name,
             digest=digest,
             status="done" if result_path.exists() else "queued",
             uploaded_url=f"/media/uploads/{upload_path.name}",
+            thumb_url=f"/media/results/{thumb_path.name}" if thumb_path.exists() else None,
             result_url=f"/media/results/{result_path.name}" if result_path.exists() else None,
             occluded_pct=prior_result.get("occluded_pct"),
             elapsed_s=prior_result.get("elapsed_s"),
@@ -476,12 +523,12 @@ def create_app(config: WebConfig) -> FastAPI:
             print("Canopticon shutdown complete.", flush=True)
 
     app = FastAPI(title="Canopticon", lifespan=lifespan)
-    app.mount("/frontend", StaticFiles(directory=config.frontend_dir), name="frontend")
+    app.mount("/frontend", FrontendStaticFiles(directory=config.frontend_dir), name="frontend")
     app.mount("/maps", StaticFiles(directory=config.maps_dir), name="maps")
 
     @app.get("/")
     async def index() -> FileResponse:
-        return FileResponse(config.frontend_dir / "index.html")
+        return FileResponse(config.frontend_dir / "index.html", headers=no_cache_headers())
 
     @app.get("/api/items")
     async def get_items() -> JSONResponse:

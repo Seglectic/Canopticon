@@ -1,11 +1,18 @@
 const gallery = document.querySelector("#gallery");
 const empty = document.querySelector("#empty");
+const splash = document.querySelector("#splash");
+const splashLogo = document.querySelector(".splash-logo");
+const splashSignoff = document.querySelector("#splashSignoff");
+const topbar = document.querySelector(".topbar");
 const statusEl = document.querySelector("#status");
+const statusSrEl = statusEl.querySelector(".sr-only");
+const mapCoords = document.querySelector("#mapCoords");
 const queueNote = document.querySelector("#queueNote");
 const input = document.querySelector("#files");
 const uploadForm = document.querySelector("#uploadForm");
 const trayHandle = document.querySelector("#trayHandle");
 const trayLabel = document.querySelector("#trayLabel");
+const viewToggle = document.querySelector(".tabs");
 const galleryTab = document.querySelector("#galleryTab");
 const mapTab = document.querySelector("#mapTab");
 const mapView = document.querySelector("#mapView");
@@ -14,6 +21,8 @@ const viewer = document.querySelector("#viewer");
 const viewerImage = document.querySelector("#viewerImage");
 const viewerTitle = document.querySelector("#viewerTitle");
 const viewerDetail = document.querySelector("#viewerDetail");
+const viewerCoords = document.querySelector("#viewerCoords");
+const viewerMapLink = document.querySelector("#viewerMapLink");
 const viewerClose = document.querySelector("#viewerClose");
 const items = new Map();
 const markers = new Map();
@@ -23,6 +32,51 @@ let markerLayer;
 let lastMapFitKey = "";
 let baseLayer;
 let controlsCollapsed = false;
+let noticeTimeout;
+let activeViewerItemId = null;
+let mapTouchTracking = false;
+
+const SPLASH_BOB_AMPLITUDE = 12;
+const SPLASH_BOB_PERIOD_MS = 2000;
+const SPLASH_GLITCH_CYCLES = 1;
+const SPLASH_GLITCH_DELAY_MS = 12;
+const SPLASH_GLITCH_JITTER_MS = 8;
+const SPLASH_POST_TEXT_PAUSE_MS = 400;
+const SPLASH_GLITCH_CHARS = "!<>-_\\/[]{}=+*^?#________";
+
+const STATUS_META = {
+  done: {
+    label: "Processed",
+    iconClass: "status-chip-icon status-chip-icon-done",
+  },
+  processing: {
+    label: "Processing",
+    iconClass: "status-chip-icon status-chip-icon-processing",
+  },
+  queued: {
+    label: "Queued",
+    iconClass: "status-chip-icon status-chip-icon-queued",
+  },
+  error: {
+    label: "Error",
+    iconClass: "status-chip-icon status-chip-icon-error",
+  },
+};
+
+function setStatus(state, message) {
+  statusEl.classList.remove("connected", "disconnected", "notice");
+  statusEl.classList.add(state);
+  statusEl.setAttribute("aria-label", message);
+  if (statusSrEl) statusSrEl.textContent = message;
+}
+
+function flashNotice(message) {
+  clearTimeout(noticeTimeout);
+  setStatus("notice", message);
+  noticeTimeout = window.setTimeout(() => {
+    setStatus("connected", "Live updates connected");
+  }, 2600);
+}
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
@@ -34,8 +88,50 @@ function escapeHtml(value) {
   }[char]));
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function jitter(base, spread) {
+  return base + Math.floor(Math.random() * (spread + 1));
+}
+
+async function animateSplashSignoff() {
+  if (!splashSignoff) return;
+  const target = splashSignoff.dataset.text || "";
+  splashSignoff.style.width = `${Math.max(target.length + 1, 18)}ch`;
+  splashSignoff.textContent = "";
+  for (let index = 0; index < target.length; index += 1) {
+    const prefix = target.slice(0, index);
+    const nextChar = target[index];
+    for (let cycle = 0; cycle < SPLASH_GLITCH_CYCLES; cycle += 1) {
+      const junk = SPLASH_GLITCH_CHARS[Math.floor(Math.random() * SPLASH_GLITCH_CHARS.length)] || nextChar;
+      splashSignoff.textContent = prefix + junk;
+      await sleep(jitter(SPLASH_GLITCH_DELAY_MS, SPLASH_GLITCH_JITTER_MS));
+      splashSignoff.textContent = prefix;
+      await sleep(jitter(Math.max(10, SPLASH_GLITCH_DELAY_MS - 6), SPLASH_GLITCH_JITTER_MS));
+    }
+    splashSignoff.textContent = prefix + nextChar;
+    await sleep(jitter(SPLASH_GLITCH_DELAY_MS, SPLASH_GLITCH_JITTER_MS));
+  }
+}
+
+function startSplashBob() {
+  if (!splash || !splashLogo) return () => {};
+  let frameId = 0;
+  const startedAt = performance.now();
+  const tick = (now) => {
+    const phase = ((now - startedAt) / SPLASH_BOB_PERIOD_MS) * Math.PI * 2;
+    const offsetY = Math.sin(phase) * SPLASH_BOB_AMPLITUDE;
+    splashLogo.style.transform = `translateY(${offsetY.toFixed(2)}px)`;
+    frameId = window.requestAnimationFrame(tick);
+  };
+  frameId = window.requestAnimationFrame(tick);
+  return () => window.cancelAnimationFrame(frameId);
+}
+
 function cardImage(item) {
-  return item.result_url || item.uploaded_url;
+  return item.thumb_url || item.result_url || item.uploaded_url;
 }
 
 function gpsText(item) {
@@ -85,13 +181,96 @@ function itemHasGps(item) {
   );
 }
 
+function setMapCoords(latlng) {
+  if (!mapCoords) return;
+  if (!latlng) {
+    mapCoords.textContent = "";
+    return;
+  }
+  mapCoords.textContent = `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
+}
+
+function mapLatLngFromTouch(touch) {
+  if (!map || !touch) return null;
+  const rect = map.getContainer().getBoundingClientRect();
+  const point = L.point(touch.clientX - rect.left, touch.clientY - rect.top);
+  return map.containerPointToLatLng(point);
+}
+
+function coordsText(item) {
+  if (!itemHasGps(item)) return "";
+  return `${Number(item.gps_latitude).toFixed(5)}, ${Number(item.gps_longitude).toFixed(5)}`;
+}
+
+function clusterThumbItems(cluster) {
+  return cluster.items
+    .map((item) => ({ item, src: cardImage(item) }))
+    .filter(({ src }) => Boolean(src))
+    .slice(0, 2);
+}
+
+function clusterBubbleHtml(cluster) {
+  const isCluster = cluster.items.length > 1;
+  const thumbs = clusterThumbItems(cluster);
+  const clipId = `mapBubble-${cluster.items.map((item) => item.id).join("-").replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const imageMarkup = thumbs.length
+    ? thumbs.map(({ src }, index) => `
+        <image
+          href="${escapeHtml(src)}"
+          width="74"
+          height="90"
+          preserveAspectRatio="xMidYMid slice"
+          clip-path="url(#${clipId}-${thumbs.length === 2 ? `slice${index + 1}` : "shape"})"
+        ></image>
+      `).join("")
+    : `<rect class="map-bubble-fallback" width="74" height="90" clip-path="url(#${clipId}-shape)"></rect>`;
+  const thumbMarkup = thumbs.length
+    ? ""
+    : '<span class="sr-only">No thumbnail</span>';
+  const badge = isCluster
+    ? `<span class="map-bubble-count">${cluster.items.length}</span>`
+    : `<span class="map-bubble-badge">${escapeHtml(pinText(cluster.items[0]))}</span>`;
+  return `
+    <div class="map-bubble ${isCluster ? "cluster" : "single"} thumb-count-${thumbs.length}">
+      <svg class="map-bubble-svg" viewBox="0 0 74 90" aria-hidden="true" focusable="false">
+        <defs>
+          <path id="${clipId}-path" d="M37 2 C20 2 7 15 7 32 C7 52 27 63 37 88 C47 63 67 52 67 32 C67 15 54 2 37 2 Z"></path>
+          <clipPath id="${clipId}-shape"><use href="#${clipId}-path"></use></clipPath>
+          <clipPath id="${clipId}-slice1">
+            <polygon points="0 0 74 0 0 90"></polygon>
+          </clipPath>
+          <clipPath id="${clipId}-slice2">
+            <polygon points="74 0 74 90 0 90"></polygon>
+          </clipPath>
+        </defs>
+        <use class="map-bubble-border" href="#${clipId}-path"></use>
+        <g clip-path="url(#${clipId}-shape)" transform="translate(4 4) scale(0.891)">
+          ${imageMarkup}
+          <rect class="map-bubble-shade" width="74" height="90"></rect>
+        </g>
+      </svg>
+      ${thumbMarkup}
+      ${badge}
+    </div>
+  `;
+}
+
 function openViewer(id) {
   const item = items.get(id);
   if (!item) return;
-  viewerImage.src = cardImage(item);
+  const nextSrc = item.result_url || item.uploaded_url;
+  activeViewerItemId = id;
+  viewerImage.classList.add("is-loading");
+  viewerImage.src = nextSrc;
+  if (viewerImage.complete) {
+    window.requestAnimationFrame(() => viewerImage.classList.remove("is-loading"));
+  }
   viewerTitle.textContent = item.filename;
   viewerDetail.textContent = detailText(item);
+  viewerCoords.textContent = coordsText(item);
+  viewerMapLink.hidden = !itemHasGps(item);
   viewer.showModal();
+  document.body.classList.add("viewer-open");
 }
 
 function mapFitKey(mapped) {
@@ -101,11 +280,47 @@ function mapFitKey(mapped) {
 function ensureMap() {
   if (map || !window.L) return;
   map = L.map("map", {
-    zoomControl: true,
+    zoomControl: false,
     attributionControl: true,
   });
+  L.control.zoom({ position: "bottomright" }).addTo(map);
   markerLayer = L.layerGroup().addTo(map);
   map.on("zoomend", () => renderMap(false));
+  map.on("mousemove", (event) => {
+    setMapCoords(event.latlng);
+  });
+  map.on("mouseout", () => {
+    if (!mapTouchTracking) setMapCoords(null);
+  });
+  const mapContainer = map.getContainer();
+  mapContainer.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 1) {
+      mapTouchTracking = false;
+      return;
+    }
+    mapTouchTracking = true;
+    setMapCoords(mapLatLngFromTouch(event.touches[0]));
+  }, { passive: true });
+  mapContainer.addEventListener("touchmove", (event) => {
+    if (!mapTouchTracking || event.touches.length !== 1) return;
+    setMapCoords(mapLatLngFromTouch(event.touches[0]));
+  }, { passive: true });
+  mapContainer.addEventListener("touchend", (event) => {
+    if (!mapTouchTracking) {
+      setMapCoords(null);
+      return;
+    }
+    if (event.touches.length === 1) {
+      setMapCoords(mapLatLngFromTouch(event.touches[0]));
+      return;
+    }
+    mapTouchTracking = false;
+    setMapCoords(null);
+  }, { passive: true });
+  mapContainer.addEventListener("touchcancel", () => {
+    mapTouchTracking = false;
+    setMapCoords(null);
+  }, { passive: true });
   map.setView([20, 0], 2);
   if (!baseLayer) {
     baseLayer = protomapsL.leafletLayer({
@@ -163,18 +378,9 @@ function renderMap(allowFit = false) {
     const marker = L.marker([cluster.lat, cluster.lng], {
       icon: L.divIcon({
         className: "",
-        html: `
-          <div class="map-pin ${isCluster ? "cluster" : ""}">
-            <svg viewBox="0 0 64 72" aria-hidden="true" focusable="false">
-              <path class="map-pin-border" d="M32 1 C42 1 54 7 59 18 C65 31 60 48 46 58 C39 63 35 68 32 71 C29 68 25 63 18 58 C4 48 -1 31 5 18 C10 7 22 1 32 1 Z"></path>
-              <path class="map-pin-fill" d="M32 6 C40 6 50 11 54 20 C59 31 55 45 43 54 C37 59 34 63 32 66 C30 63 27 59 21 54 C9 45 5 31 10 20 C14 11 24 6 32 6 Z"></path>
-            </svg>
-            <span class="map-pin-value">${escapeHtml(clusterText(cluster))}</span>
-            ${isCluster ? `<span class="map-pin-count">${cluster.items.length}</span>` : ""}
-          </div>
-        `,
-        iconSize: [64, 72],
-        iconAnchor: [32, 70],
+        html: clusterBubbleHtml(cluster),
+        iconSize: [74, 90],
+        iconAnchor: [37, 88],
       }),
       title: isCluster ? `${cluster.items.length} photos` : cluster.items[0].filename,
     });
@@ -212,6 +418,7 @@ function renderMap(allowFit = false) {
 function setView(view) {
   activeView = view;
   const showMap = view === "map";
+  document.body.classList.toggle("map-active", showMap);
   gallery.classList.toggle("active", !showMap);
   mapView.classList.toggle("active", showMap);
   galleryTab.classList.toggle("active", !showMap);
@@ -219,26 +426,60 @@ function setView(view) {
   galleryTab.setAttribute("aria-selected", String(!showMap));
   mapTab.setAttribute("aria-selected", String(showMap));
   if (showMap) {
+    controlsCollapsed = false;
+    uploadForm.classList.remove("collapsed");
+    setMapCoords(null);
+  } else {
+    mapTouchTracking = false;
+    setMapCoords(null);
+  }
+  updateChromeMetrics();
+  if (showMap) {
     renderMap(true);
-    setTimeout(() => map?.invalidateSize(), 50);
+    window.setTimeout(() => map?.invalidateSize(), 50);
   }
 }
 
 function setControlsCollapsed(collapsed) {
-  controlsCollapsed = collapsed;
-  uploadForm.classList.toggle("collapsed", collapsed);
+  controlsCollapsed = false;
+  uploadForm.classList.remove("collapsed");
   trayHandle.setAttribute("aria-expanded", String(!collapsed));
   trayHandle.setAttribute("aria-label", collapsed ? "Show controls" : "Collapse controls");
   trayLabel.textContent = collapsed ? "Show Controls" : "Hide Controls";
+  updateChromeMetrics();
+}
+
+function updateChromeMetrics() {
+  const topbarHeight = topbar?.offsetHeight || 0;
+  const drawerHeight = uploadForm?.offsetHeight || 0;
+  document.documentElement.style.setProperty("--topbar-height", `${topbarHeight}px`);
+  document.documentElement.style.setProperty("--drawer-height", `${drawerHeight}px`);
+  if (activeView === "map") {
+    window.setTimeout(() => map?.invalidateSize(), 0);
+  }
+}
+
+function statusChip(item) {
+  const meta = STATUS_META[item.status] || STATUS_META.queued;
+  return `
+    <span
+      class="status-chip ${item.status}"
+      role="status"
+      aria-label="${escapeHtml(meta.label)}"
+      title="${escapeHtml(meta.label)}"
+    >
+      <span class="${meta.iconClass}" aria-hidden="true"></span>
+    </span>
+  `;
 }
 
 function render() {
-  const list = Array.from(items.values()).reverse();
+  const list = Array.from(items.values()).sort((left, right) => left.id.localeCompare(right.id));
   empty.style.display = list.length || activeView === "map" ? "none" : "grid";
   gallery.innerHTML = list.map((item) => `
     <button class="tile" type="button" data-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.filename)}">
-      <img src="${cardImage(item)}" alt="">
-      <span class="pill ${item.status}">${item.status}</span>
+      <img src="${cardImage(item)}" alt="" loading="lazy" decoding="async">
+      ${statusChip(item)}
       <span class="tile-overlay">
         <span class="tile-name">${escapeHtml(item.filename)}</span>
         <span class="tile-meta">${escapeHtml(detailText(item))}</span>
@@ -248,6 +489,15 @@ function render() {
 
   const queued = list.filter((item) => item.status === "queued" || item.status === "processing").length;
   queueNote.textContent = queued ? `${queued} waiting or processing` : "";
+  if (activeViewerItemId && items.has(activeViewerItemId) && viewer.open) {
+    const item = items.get(activeViewerItemId);
+    if (item) {
+      viewerImage.src = item.result_url || item.uploaded_url;
+      viewerDetail.textContent = detailText(item);
+      viewerCoords.textContent = coordsText(item);
+      viewerMapLink.hidden = !itemHasGps(item);
+    }
+  }
   if (activeView === "map") renderMap();
 }
 
@@ -261,9 +511,10 @@ async function loadItems() {
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.addEventListener("open", () => { statusEl.textContent = "Live updates connected"; });
+  ws.addEventListener("open", () => { setStatus("connected", "Live updates connected"); });
   ws.addEventListener("close", () => {
-    statusEl.textContent = "Reconnecting...";
+    clearTimeout(noticeTimeout);
+    setStatus("disconnected", "Live updates reconnecting");
     setTimeout(connect, 1200);
   });
   ws.addEventListener("message", (event) => {
@@ -275,10 +526,10 @@ function connect() {
       items.set(data.item.id, data.item);
     }
     if (data.type === "duplicate") {
-      statusEl.textContent = `Duplicate skipped: ${data.filename}`;
+      flashNotice(`Duplicate skipped: ${data.filename}`);
     }
     if (data.type === "notice") {
-      statusEl.textContent = data.message;
+      flashNotice(data.message);
     }
     render();
   });
@@ -290,15 +541,35 @@ gallery.addEventListener("click", (event) => {
   openViewer(tile.dataset.id);
 });
 
-galleryTab.addEventListener("click", () => setView("gallery"));
-mapTab.addEventListener("click", () => setView("map"));
+viewToggle.addEventListener("click", () => {
+  setView(activeView === "map" ? "gallery" : "map");
+});
 viewerClose.addEventListener("click", () => viewer.close());
+viewerImage.addEventListener("load", () => {
+  viewerImage.classList.remove("is-loading");
+});
+viewerImage.addEventListener("error", () => {
+  viewerImage.classList.remove("is-loading");
+});
 viewer.addEventListener("click", (event) => {
   if (event.target === viewer) viewer.close();
+});
+viewer.addEventListener("close", () => {
+  activeViewerItemId = null;
+  document.body.classList.remove("viewer-open");
+});
+viewerMapLink.addEventListener("click", () => {
+  const item = items.get(activeViewerItemId || "");
+  if (!item || !itemHasGps(item)) return;
+  viewer.close();
+  setView("map");
+  ensureMap();
+  map?.setView([item.gps_latitude, item.gps_longitude], 16);
 });
 trayHandle.addEventListener("click", () => {
   setControlsCollapsed(!controlsCollapsed);
 });
+window.addEventListener("resize", updateChromeMetrics);
 
 input.addEventListener("change", async () => {
   if (!input.files.length) return;
@@ -309,7 +580,7 @@ input.addEventListener("change", async () => {
 
   const response = await fetch("/api/upload", { method: "POST", body: formData });
   if (!response.ok) {
-    statusEl.textContent = "Upload failed";
+    flashNotice("Upload failed");
     queueNote.textContent = "";
     return;
   }
@@ -318,6 +589,22 @@ input.addEventListener("change", async () => {
   render();
 });
 
-loadItems();
-setControlsCollapsed(false);
+const startup = loadItems().catch(() => {
+  flashNotice("Initial load failed");
+});
+
 connect();
+setControlsCollapsed(false);
+updateChromeMetrics();
+const stopSplashBob = startSplashBob();
+const splashTextAnimation = animateSplashSignoff();
+
+Promise.all([sleep(1000), startup, splashTextAnimation]).finally(() => {
+  Promise.resolve()
+    .then(() => sleep(SPLASH_POST_TEXT_PAUSE_MS))
+    .finally(() => {
+      stopSplashBob();
+      splash?.classList.add("is-fading");
+      window.setTimeout(() => splash?.remove(), 420);
+    });
+});

@@ -6,7 +6,16 @@ from pathlib import Path
 import uvicorn
 
 from .inference import process_folder
-from .settings import DATA_DIR, DEFAULT_PORT, EVENT_LOG, FRONTEND_DIR, INGEST_DIR, MAPS_DIR, WebConfig
+from .settings import (
+    DATA_DIR,
+    DEFAULT_PORT,
+    DEFAULT_THUMBNAIL_SIZE,
+    EVENT_LOG,
+    FRONTEND_DIR,
+    INGEST_DIR,
+    MAPS_DIR,
+    WebConfig,
+)
 from .web import create_app
 
 
@@ -46,6 +55,8 @@ def add_processing_options(parser: argparse.ArgumentParser) -> None:
 def validate_processing_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if not (0.0 < args.scale <= 1.0):
         parser.error("--scale must be greater than 0 and at most 1.0")
+    if hasattr(args, "thumbnail_size") and args.thumbnail_size < 32:
+        parser.error("--thumbnail-size must be at least 32 pixels")
 
 
 def serve(args: argparse.Namespace) -> None:
@@ -62,6 +73,7 @@ def serve(args: argparse.Namespace) -> None:
         frontend_dir=args.frontend_dir,
         event_log=args.event_log,
         maps_dir=args.maps_dir,
+        thumbnail_size=args.thumbnail_size,
     )
     app = create_app(config)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
@@ -105,6 +117,12 @@ def main() -> None:
         type=Path,
         default=MAPS_DIR,
         help="Directory for offline map assets such as PMTiles files",
+    )
+    serve_parser.add_argument(
+        "--thumbnail-size",
+        type=int,
+        default=DEFAULT_THUMBNAIL_SIZE,
+        help="Square thumbnail size in pixels",
     )
     add_processing_options(serve_parser)
 
