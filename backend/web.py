@@ -42,6 +42,12 @@ def no_cache_headers() -> dict[str, str]:
     }
 
 
+def versioned_media_url(url_path: str, file_path: Path) -> str:
+    if not file_path.exists():
+        return url_path
+    return f"{url_path}?v={file_path.stat().st_mtime_ns}"
+
+
 class FrontendStaticFiles(StaticFiles):
     def file_response(self, *args: Any, **kwargs: Any) -> Response:
         response = super().file_response(*args, **kwargs)
@@ -68,6 +74,15 @@ class WebState:
         self.accepting_uploads = False
         self.loop: asyncio.AbstractEventLoop | None = None
         self.capture_helper: subprocess.Popen[str] | None = None
+
+
+def remove_item_files(state: WebState, item: ImageItem) -> None:
+    upload_path = state.upload_dir / f"{item.id}{Path(item.filename).suffix.lower()}"
+    result_path = state.result_dir / f"{item.id}_overlay.jpg"
+    thumb_path = state.result_dir / f"{item.id}_thumb.jpg"
+    upload_path.unlink(missing_ok=True)
+    result_path.unlink(missing_ok=True)
+    thumb_path.unlink(missing_ok=True)
 
 
 def capture_photo_to_ingest(output_path: Path) -> None:
@@ -135,14 +150,14 @@ async def register_ingested_photo(
             ingest_path.replace(upload_path)
             try:
                 await asyncio.to_thread(create_thumbnail, upload_path, thumb_path, size=state.config.thumbnail_size)
-                thumb_url = f"/media/results/{thumb_path.name}"
+                thumb_url = versioned_media_url(f"/media/results/{thumb_path.name}", thumb_path)
             except Exception:
                 thumb_url = None
             created_item = build_item(
                 image_id=image_id,
                 filename=original_name,
                 digest=digest,
-                uploaded_url=f"/media/uploads/{upload_path.name}",
+                uploaded_url=versioned_media_url(f"/media/uploads/{upload_path.name}", upload_path),
                 metadata=metadata,
             )
             created_item.thumb_url = thumb_url
@@ -370,9 +385,13 @@ async def processing_worker(state: WebState) -> None:
                 )
             except Exception as exc:
                 async with state.lock:
-                    item.status = "error"
-                    item.error = str(exc)
-                    payload = item_to_payload(item)
+                    current_item = state.items.get(image_id)
+                    if current_item is None:
+                        payload = None
+                    else:
+                        current_item.status = "error"
+                        current_item.error = str(exc)
+                        payload = item_to_payload(current_item)
                 log_event(
                     state.event_log,
                     "processing_error",
@@ -382,13 +401,24 @@ async def processing_worker(state: WebState) -> None:
                 )
             else:
                 async with state.lock:
-                    item.status = "done"
-                    item.thumb_url = f"/media/results/{thumb_path.name}" if thumb_path.exists() else item.thumb_url
-                    item.result_url = f"/media/results/{result_path.name}"
-                    item.occluded_pct = occluded_pct
-                    item.elapsed_s = elapsed_s
-                    item.error = None
-                    payload = item_to_payload(item)
+                    current_item = state.items.get(image_id)
+                    if current_item is None:
+                        payload = None
+                    else:
+                        current_item.status = "done"
+                        current_item.thumb_url = (
+                            versioned_media_url(f"/media/results/{thumb_path.name}", thumb_path)
+                            if thumb_path.exists()
+                            else current_item.thumb_url
+                        )
+                        current_item.result_url = versioned_media_url(
+                            f"/media/results/{result_path.name}",
+                            result_path,
+                        )
+                        current_item.occluded_pct = occluded_pct
+                        current_item.elapsed_s = elapsed_s
+                        current_item.error = None
+                        payload = item_to_payload(current_item)
                 log_event(
                     state.event_log,
                     "processing_done",
@@ -398,7 +428,11 @@ async def processing_worker(state: WebState) -> None:
                     elapsed_s=round(elapsed_s, 4),
                 )
 
-            await broadcast(state, {"type": "item", "item": payload})
+            if payload is None:
+                result_path.unlink(missing_ok=True)
+                thumb_path.unlink(missing_ok=True)
+            else:
+                await broadcast(state, {"type": "item", "item": payload})
         finally:
             state.queue.task_done()
 
@@ -427,9 +461,9 @@ def index_existing_uploads(state: WebState) -> None:
             filename=upload_path.name,
             digest=digest,
             status="done" if result_path.exists() else "queued",
-            uploaded_url=f"/media/uploads/{upload_path.name}",
-            thumb_url=f"/media/results/{thumb_path.name}" if thumb_path.exists() else None,
-            result_url=f"/media/results/{result_path.name}" if result_path.exists() else None,
+            uploaded_url=versioned_media_url(f"/media/uploads/{upload_path.name}", upload_path),
+            thumb_url=versioned_media_url(f"/media/results/{thumb_path.name}", thumb_path) if thumb_path.exists() else None,
+            result_url=versioned_media_url(f"/media/results/{result_path.name}", result_path) if result_path.exists() else None,
             occluded_pct=prior_result.get("occluded_pct"),
             elapsed_s=prior_result.get("elapsed_s"),
             gps_present=metadata["gps_present"],
@@ -450,7 +484,7 @@ def media_response(directory: Path, filename: str) -> FileResponse:
     path = directory / safe_name
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(path)
+    return FileResponse(path, headers=no_cache_headers())
 
 
 def build_map_sources(state: WebState) -> tuple[list[dict[str, Any]], str]:
@@ -593,6 +627,18 @@ def create_app(config: WebConfig) -> FastAPI:
     @app.post("/api/capture")
     async def capture_photo() -> Response:
         await handle_gpio_capture(state)
+        return Response(status_code=204)
+
+    @app.delete("/api/items/{image_id}")
+    async def delete_item(image_id: str) -> Response:
+        async with state.lock:
+            item = state.items.pop(image_id, None)
+            if item is None:
+                raise HTTPException(status_code=404, detail="Item not found")
+            state.hash_to_id.pop(item.digest, None)
+        remove_item_files(state, item)
+        log_event(state.event_log, "item_deleted", image_id=image_id, filename=item.filename)
+        await broadcast(state, {"type": "deleted", "id": image_id})
         return Response(status_code=204)
 
     @app.get("/media/uploads/{filename}")

@@ -23,12 +23,14 @@ const viewerTitle = document.querySelector("#viewerTitle");
 const viewerStatValue = document.querySelector("#viewerStatValue");
 const viewerCoords = document.querySelector("#viewerCoords");
 const viewerMapLink = document.querySelector("#viewerMapLink");
+const viewerDelete = document.querySelector("#viewerDelete");
 const viewerClose = document.querySelector("#viewerClose");
 const items = new Map();
 const markers = new Map();
 let activeView = "gallery";
 let map;
 let markerLayer;
+let heatCanvas;
 let lastMapFitKey = "";
 let baseLayer;
 let controlsCollapsed = false;
@@ -213,6 +215,12 @@ function clusterThumbItems(cluster) {
     .slice(0, 2);
 }
 
+function heatMappedItems() {
+  return Array.from(items.values()).filter(
+    (item) => itemHasGps(item) && typeof item.occluded_pct === "number"
+  );
+}
+
 function clusterBubbleHtml(cluster) {
   const isCluster = cluster.items.length > 1;
   const thumbs = clusterThumbItems(cluster);
@@ -228,12 +236,7 @@ function clusterBubbleHtml(cluster) {
         ></image>
       `).join("")
     : `<rect class="map-bubble-fallback" width="74" height="90" clip-path="url(#${clipId}-shape)"></rect>`;
-  const thumbMarkup = thumbs.length
-    ? ""
-    : '<span class="sr-only">No thumbnail</span>';
-  const badge = isCluster
-    ? `<span class="map-bubble-count">${cluster.items.length}</span>`
-    : `<span class="map-bubble-badge">${escapeHtml(pinText(cluster.items[0]))}</span>`;
+  const badgeText = isCluster ? String(cluster.items.length) : pinText(cluster.items[0]);
   return `
     <div class="map-bubble ${isCluster ? "cluster" : "single"} thumb-count-${thumbs.length}">
       <svg class="map-bubble-svg" viewBox="0 0 74 90" aria-hidden="true" focusable="false">
@@ -252,29 +255,122 @@ function clusterBubbleHtml(cluster) {
           ${imageMarkup}
           <rect class="map-bubble-shade" width="74" height="90"></rect>
         </g>
+        <g class="map-bubble-badge-svg" transform="translate(58 6)">
+          <rect x="-2" y="-2" rx="12" ry="12" width="${isCluster ? 28 : 30}" height="24"></rect>
+          <text x="${isCluster ? 12 : 13}" y="13">${escapeHtml(badgeText)}</text>
+        </g>
       </svg>
-      ${thumbMarkup}
-      ${badge}
+      ${thumbs.length ? "" : '<span class="sr-only">No thumbnail</span>'}
     </div>
   `;
+}
+
+function renderHeatOverlay() {
+  if (!map || !heatCanvas) return;
+  const mapped = heatMappedItems();
+  const size = map.getSize();
+  const ratio = window.devicePixelRatio || 1;
+  if (heatCanvas.width !== Math.round(size.x * ratio) || heatCanvas.height !== Math.round(size.y * ratio)) {
+    heatCanvas.width = Math.round(size.x * ratio);
+    heatCanvas.height = Math.round(size.y * ratio);
+    heatCanvas.style.width = `${size.x}px`;
+    heatCanvas.style.height = `${size.y}px`;
+  }
+  const ctx = heatCanvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, size.x, size.y);
+
+  if (!mapped.length) {
+    return;
+  }
+
+  const zoom = map.getZoom();
+  const points = mapped.map((item) => ({
+    x: map.latLngToContainerPoint([item.gps_latitude, item.gps_longitude]).x,
+    y: map.latLngToContainerPoint([item.gps_latitude, item.gps_longitude]).y,
+    latitude: item.gps_latitude,
+    strength: Math.min(1, Math.max(0.08, item.occluded_pct / 100)),
+  }));
+  const step = zoom <= 13 ? 10 : zoom <= 16 ? 8 : 6;
+
+  for (let y = 0; y < size.y; y += step) {
+    for (let x = 0; x < size.x; x += step) {
+      let field = 0;
+      for (const point of points) {
+        const latitudeScale = Math.max(0.2, Math.cos((point.latitude * Math.PI) / 180));
+        const metersPerPixel = (40075016.686 * latitudeScale) / (256 * (2 ** zoom));
+        const radiusMeters = 250 + (point.strength * 64);
+        const radius = Math.max(8, Math.min(104, radiusMeters / metersPerPixel));
+        const dx = x - point.x;
+        const dy = y - point.y;
+        const distanceSq = (dx * dx) + (dy * dy);
+        if (distanceSq > radius * radius) continue;
+        const distance = Math.sqrt(distanceSq);
+        const normalized = distance / radius;
+        const influence = (point.strength ** 1.35) * Math.exp(-(normalized * normalized) * 3.8);
+        field = 1 - ((1 - field) * (1 - influence));
+      }
+      if (field < 0.03) continue;
+      const alpha = Math.min(0.68, 0.06 + (field * 0.78));
+      ctx.fillStyle = `rgba(116, 84, 204, ${alpha.toFixed(3)})`;
+      ctx.fillRect(x, y, step, step);
+    }
+  }
+
+  ctx.save();
+  ctx.globalCompositeOperation = "source-atop";
+  ctx.translate(size.x / 2, size.y / 2);
+  ctx.rotate(Math.PI / 4);
+  ctx.translate(-size.x / 2, -size.y / 2);
+  ctx.fillStyle = "rgba(185, 150, 255, 0.30)";
+  for (let x = -size.y; x < size.x + size.y; x += 14) {
+    ctx.fillRect(x, -size.y, 5, size.y * 3);
+  }
+  ctx.restore();
+}
+
+function itemClusteredAtZoom(targetItem, zoom) {
+  if (!map) return false;
+  const targetPoint = map.project([targetItem.gps_latitude, targetItem.gps_longitude], zoom);
+  return Array.from(items.values()).some((item) => {
+    if (item.id === targetItem.id || !itemHasGps(item)) return false;
+    const point = map.project([item.gps_latitude, item.gps_longitude], zoom);
+    return targetPoint.distanceTo(point) <= 72;
+  });
+}
+
+function zoomForStandaloneItem(targetItem) {
+  if (!map) return 16;
+  const startZoom = Math.max(map.getZoom(), 16);
+  for (let zoom = startZoom; zoom <= 24; zoom += 1) {
+    if (!itemClusteredAtZoom(targetItem, zoom)) return zoom;
+  }
+  return 24;
 }
 
 function openViewer(id) {
   const item = items.get(id);
   if (!item) return;
-  const nextSrc = item.result_url || item.uploaded_url;
   activeViewerItemId = id;
-  viewerImage.classList.add("is-loading");
-  viewerImage.src = nextSrc;
-  if (viewerImage.complete) {
-    window.requestAnimationFrame(() => viewerImage.classList.remove("is-loading"));
+  updateViewer(item);
+  viewer.showModal();
+  document.body.classList.add("viewer-open");
+}
+
+function updateViewer(item) {
+  const nextSrc = item.result_url || item.uploaded_url;
+  if (viewerImage.src !== new URL(nextSrc, window.location.href).href) {
+    viewerImage.classList.add("is-loading");
+    viewerImage.src = nextSrc;
+    if (viewerImage.complete) {
+      window.requestAnimationFrame(() => viewerImage.classList.remove("is-loading"));
+    }
   }
   viewerStatValue.textContent = occlusionText(item);
   viewerTitle.textContent = item.filename;
   viewerCoords.textContent = coordsText(item);
   viewerMapLink.hidden = !itemHasGps(item);
-  viewer.showModal();
-  document.body.classList.add("viewer-open");
 }
 
 function mapFitKey(mapped) {
@@ -288,8 +384,14 @@ function ensureMap() {
     attributionControl: true,
   });
   L.control.zoom({ position: "bottomright" }).addTo(map);
+  heatCanvas = document.createElement("canvas");
+  heatCanvas.classList.add("map-heat-layer");
+  map.getContainer().appendChild(heatCanvas);
   markerLayer = L.layerGroup().addTo(map);
   map.on("zoomend", () => renderMap(false));
+  map.on("move", renderHeatOverlay);
+  map.on("moveend", () => renderMap(false));
+  map.on("resize", () => renderMap(false));
   map.on("mousemove", (event) => {
     setMapCoords(event.latlng);
   });
@@ -369,6 +471,7 @@ function renderMap(allowFit = false) {
   markerLayer.clearLayers();
   markers.clear();
   const mapped = Array.from(items.values()).filter(itemHasGps);
+  renderHeatOverlay();
   mapEmpty.classList.toggle("hidden", mapped.length > 0);
   if (!mapped.length && allowFit) {
     map.fitBounds([[24.3, -87.7], [31.1, -79.8]], { padding: [18, 18], maxZoom: 7 });
@@ -381,7 +484,7 @@ function renderMap(allowFit = false) {
     const isCluster = cluster.items.length > 1;
     const marker = L.marker([cluster.lat, cluster.lng], {
       icon: L.divIcon({
-        className: "",
+        className: "map-bubble-icon",
         html: clusterBubbleHtml(cluster),
         iconSize: [74, 90],
         iconAnchor: [37, 88],
@@ -501,11 +604,7 @@ function render() {
   if (activeViewerItemId && items.has(activeViewerItemId) && viewer.open) {
     const item = items.get(activeViewerItemId);
     if (item) {
-      viewerImage.src = item.result_url || item.uploaded_url;
-      viewerStatValue.textContent = occlusionText(item);
-      viewerTitle.textContent = item.filename;
-      viewerCoords.textContent = coordsText(item);
-      viewerMapLink.hidden = !itemHasGps(item);
+      updateViewer(item);
     }
   }
   if (activeView === "map") renderMap();
@@ -534,6 +633,12 @@ function connect() {
     }
     if (data.type === "item") {
       items.set(data.item.id, data.item);
+    }
+    if (data.type === "deleted") {
+      items.delete(data.id);
+      if (activeViewerItemId === data.id && viewer.open) {
+        viewer.close();
+      }
     }
     if (data.type === "duplicate") {
       flashNotice(`Duplicate skipped: ${data.filename}`);
@@ -574,7 +679,21 @@ viewerMapLink.addEventListener("click", () => {
   viewer.close();
   setView("map");
   ensureMap();
-  map?.setView([item.gps_latitude, item.gps_longitude], 16);
+  const zoom = zoomForStandaloneItem(item);
+  map?.setView([item.gps_latitude, item.gps_longitude], zoom);
+});
+viewerDelete.addEventListener("click", async () => {
+  const imageId = activeViewerItemId;
+  if (!imageId) return;
+  const response = await fetch(`/api/items/${encodeURIComponent(imageId)}`, { method: "DELETE" });
+  if (!response.ok) {
+    flashNotice("Delete failed");
+    return;
+  }
+  viewer.close();
+  items.delete(imageId);
+  render();
+  flashNotice("Photo deleted");
 });
 trayHandle.addEventListener("click", () => {
   setControlsCollapsed(!controlsCollapsed);

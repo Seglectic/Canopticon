@@ -36,7 +36,7 @@ def add_processing_options(parser: argparse.ArgumentParser) -> None:
         "--alpha",
         type=float,
         default=0.55,
-        help="Overlay strength for red occlusion mask",
+        help="Overlay strength for purple occlusion mask",
     )
     parser.add_argument(
         "--device",

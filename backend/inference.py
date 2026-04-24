@@ -24,6 +24,8 @@ LABEL_MIN_PADDING_PX = 10
 LABEL_MIN_TEXT_HEIGHT_PX = 18
 LABEL_MAX_TEXT_HEIGHT_PX = 40
 LABEL_TEXT_THICKNESS = 2
+OCCLUSION_TINT_BGR = (154, 92, 140)
+OCCLUSION_STRIPE_BGR = (214, 164, 232)
 PROVIDER_PRIORITY = {
     "nvidia": ["TensorrtExecutionProvider", "CUDAExecutionProvider", CPU_PROVIDER],
     "amd": ["MIGraphXExecutionProvider", "ROCMExecutionProvider", CPU_PROVIDER],
@@ -154,19 +156,39 @@ def make_overlay(
     occluded_pct = 100.0 * occluded_pixels / total_pixels if total_pixels else 0.0
 
     overlay = image_bgr.copy()
-    red = np.zeros_like(image_bgr)
-    red[:, :] = (0, 0, 255)
+    tint = np.zeros_like(image_bgr)
+    tint[:, :] = OCCLUSION_TINT_BGR
 
     overlay[occluded_binary] = cv2.addWeighted(
         image_bgr[occluded_binary],
         1.0 - alpha,
-        red[occluded_binary],
+        tint[occluded_binary],
         alpha,
         0.0,
     )
 
-    font = cv2.FONT_HERSHEY_SIMPLEX
     short_side = min(image_bgr.shape[0], image_bgr.shape[1])
+    stripe_spacing = max(10, int(round(short_side * 0.03)))
+    stripe_thickness = max(3, int(round(short_side * 0.008)))
+    stripe_mask = np.zeros(image_bgr.shape[:2], dtype=np.uint8)
+    height, width = stripe_mask.shape
+    for offset in range(-height, width + height, stripe_spacing):
+        start = (offset, 0)
+        end = (offset + height, height)
+        cv2.line(stripe_mask, start, end, 255, stripe_thickness, cv2.LINE_AA)
+    striped_binary = np.logical_and(stripe_mask > 0, occluded_binary)
+    if np.any(striped_binary):
+        stripe_tint = np.zeros_like(image_bgr)
+        stripe_tint[:, :] = OCCLUSION_STRIPE_BGR
+        overlay[striped_binary] = cv2.addWeighted(
+            overlay[striped_binary],
+            0.42,
+            stripe_tint[striped_binary],
+            0.58,
+            0.0,
+        )
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
     padding_px = max(LABEL_MIN_PADDING_PX, int(round(short_side * LABEL_PADDING_RATIO)))
     text_height_px = min(
         LABEL_MAX_TEXT_HEIGHT_PX,
@@ -299,4 +321,3 @@ def process_folder(
         print("Failed to read:")
         for name in failed_files:
             print(f"  {name}")
-

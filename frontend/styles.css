@@ -157,6 +157,9 @@ body.map-active {
   position: sticky;
   top: 0;
   z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 16px 14px 12px;
   background: var(--surface-alpha);
   border-bottom: 1px solid var(--line);
@@ -201,7 +204,9 @@ h1 {
 }
 
 .status.connected {
-  color: color-mix(in srgb, var(--muted) 60%, transparent);
+  color: color-mix(in srgb, var(--green) 72%, white 20%);
+  border-color: color-mix(in srgb, var(--green) 36%, var(--line));
+  background: color-mix(in srgb, var(--surface-alpha) 82%, var(--green) 12%);
 }
 
 .status.disconnected,
@@ -247,6 +252,11 @@ h1 {
   height: 22px;
   mask-image: url("/frontend/assets/add-photo.svg");
   -webkit-mask-image: url("/frontend/assets/add-photo.svg");
+}
+
+.icon-trash {
+  mask-image: url("/frontend/assets/trash.svg");
+  -webkit-mask-image: url("/frontend/assets/trash.svg");
 }
 
 .sr-only {
@@ -345,18 +355,37 @@ body.map-active .map-view.active {
   background: var(--surface);
 }
 
+.map-heat-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 450;
+}
+
+.leaflet-marker-icon.map-bubble-icon,
+.leaflet-div-icon.map-bubble-icon {
+  background: transparent;
+  border: 0;
+  overflow: visible;
+}
+
 .map-bubble {
   position: relative;
   width: 74px;
   height: 90px;
   display: inline-grid;
   place-items: center;
+  overflow: visible;
+  isolation: isolate;
   filter: drop-shadow(0 12px 18px var(--shadow));
 }
 
 .map-bubble-svg {
   position: relative;
-  z-index: 1;
+  z-index: -2;
   width: 74px;
   height: 90px;
   display: block;
@@ -376,28 +405,19 @@ body.map-active .map-view.active {
   pointer-events: none;
 }
 
-.map-bubble-badge,
-.map-bubble-count {
-  position: absolute;
-  z-index: 4;
-  right: -2px;
-  top: -6px;
-  min-width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  padding: 0 7px;
-  border: 2px solid color-mix(in srgb, var(--surface) 88%, white);
-  border-radius: 999px;
-  color: #f8f8f2;
-  background: color-mix(in srgb, var(--accent-strong) 88%, black 12%);
-  font-size: 0.66rem;
-  font-weight: 900;
-  line-height: 1;
+.map-bubble-badge-svg rect {
+  fill: color-mix(in srgb, var(--accent-strong) 88%, black 12%);
+  stroke: color-mix(in srgb, var(--surface) 88%, white);
+  stroke-width: 2px;
 }
 
-.map-bubble-count {
-  min-width: 26px;
+.map-bubble-badge-svg text {
+  fill: #f8f8f2;
+  font-family: "Oxanium", ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 900;
+  text-anchor: middle;
+  dominant-baseline: middle;
 }
 
 .empty {
@@ -566,25 +586,24 @@ body.map-active .map-view.active {
 .upload-inner {
   width: 100%;
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: auto minmax(0, 196px) auto;
-  gap: 10px;
+  display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   min-height: 64px;
 }
 
-.upload-inner .status {
-  justify-self: start;
+.upload-inner .upload-button {
+  flex: 0 0 auto;
+  margin-right: auto;
 }
 
 .tabs {
-  justify-self: end;
+  flex: 0 0 auto;
   position: relative;
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
-  width: 100%;
+  width: 196px;
   padding: 5px;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -594,6 +613,25 @@ body.map-active .map-view.active {
   isolation: isolate;
   overflow: hidden;
   z-index: 0;
+}
+
+@media (max-width: 719px) {
+  .upload-inner {
+    gap: 8px;
+  }
+
+  .upload-inner .status {
+    min-width: 0;
+  }
+
+  .upload-inner .upload-button {
+    min-width: 122px;
+    padding: 0 14px;
+  }
+
+  .tabs {
+    width: 180px;
+  }
 }
 
 .tabs::before {
@@ -774,6 +812,21 @@ input[type="file"] {
   border-radius: 50%;
   color: #f8f8f2;
   background: rgba(40, 42, 54, 0.78);
+  cursor: pointer;
+}
+
+.viewer-delete {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: #f8f8f2;
+  background: rgba(92, 63, 179, 0.82);
   cursor: pointer;
 }
 
