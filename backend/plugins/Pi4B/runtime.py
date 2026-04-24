@@ -46,6 +46,7 @@ BOOT_BACKGROUND = (244, 247, 251)
 PROCESSING_POLL_INTERVAL_SEC = 0.8
 CLIENT_POLL_INTERVAL_SEC = 1.0
 SLEEP_TIMEOUT_SEC = 120.0
+IDLE_LOOP_DELAY_SEC = 0.05
 
 BASE_URL = os.environ["CANOPTICON_PLUGIN_BASE_URL"]
 CAPTURE_URL = os.environ["CANOPTICON_PLUGIN_CAPTURE_URL"]
@@ -541,17 +542,23 @@ def main() -> None:
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     button_press_pending = 0
+    use_gpio_event_detect = False
 
     def on_button_press(_channel: int) -> None:
         nonlocal button_press_pending
         button_press_pending += 1
 
-    GPIO.add_event_detect(
-        BUTTON_PIN,
-        GPIO.FALLING,
-        callback=on_button_press,
-        bouncetime=BUTTON_BOUNCE_MS,
-    )
+    try:
+        GPIO.add_event_detect(
+            BUTTON_PIN,
+            GPIO.FALLING,
+            callback=on_button_press,
+            bouncetime=BUTTON_BOUNCE_MS,
+        )
+    except RuntimeError:
+        use_gpio_event_detect = False
+    else:
+        use_gpio_event_detect = True
 
     display = GC9A01Display()
     leds = LedController()
@@ -578,6 +585,7 @@ def main() -> None:
     portal_until = 0.0
     mode = "boot"
     last_button_press = 0.0
+    previous_button_pressed = False
     boot_started_at = time.monotonic()
     boot_ready_logged = False
     current_screen = build_boot_frame(0.0)
@@ -610,10 +618,13 @@ def main() -> None:
                 time.sleep(0.05)
                 continue
 
-            button_activated = (
-                button_press_pending > 0
-                and (now - last_button_press) >= BUTTON_DEBOUNCE_SEC
-            )
+            if not use_gpio_event_detect:
+                button_pressed = GPIO.input(BUTTON_PIN) == GPIO.LOW
+                if button_pressed and not previous_button_pressed:
+                    button_press_pending += 1
+                previous_button_pressed = button_pressed
+
+            button_activated = button_press_pending > 0 and (now - last_button_press) >= BUTTON_DEBOUNCE_SEC
             if button_activated:
                 button_press_pending = max(0, button_press_pending - 1)
                 last_button_press = now
@@ -742,13 +753,14 @@ def main() -> None:
                     wifi_qr,
                 )
 
-            time.sleep(0.25)
+            time.sleep(IDLE_LOOP_DELAY_SEC)
     finally:
         log_event("plugin_runtime_stopped")
         leds.off()
         if preview is not None:
             preview.close()
-        GPIO.remove_event_detect(BUTTON_PIN)
+        if use_gpio_event_detect:
+            GPIO.remove_event_detect(BUTTON_PIN)
         display.close()
         GPIO.cleanup()
 
