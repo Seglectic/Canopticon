@@ -51,7 +51,7 @@ Fresh full-folder run on Pi 4B CPU:
 - wall-clock time: about `280.1s`
 - per-image model time: about `4.62s` to `4.76s`
 
-Older local `photos/` and `outputs/` folders were removed from the day-to-day workflow. The app now relies on web uploads and managed runtime storage under `canopticon_data/`.
+Older local `photos/` and `outputs/` folders were removed from the day-to-day workflow. The app now relies on web uploads and managed runtime storage under `data/`.
 
 ## Overlay Changes Made
 
@@ -81,6 +81,9 @@ The intended way forward is a self-hosted Pi appliance with a mobile-first web U
 - The app binds `0.0.0.0:8009` by default.
 - Frontend files live in [client/](/home/segger/Projects/Canopticon/client).
 - The frontend uses Leaflet with OpenStreetMap tiles for the map tab.
+- The web UI now vendors its map JS/CSS locally so the map screen itself still loads without internet.
+- If `data/maps/florida.pmtiles` exists, the map tab offers an offline Florida vector basemap and defaults to it.
+- The map tab still offers a live OpenStreetMap layer as a fallback when the Pi has upstream internet.
 - Map pins are built from GPS EXIF coordinates and display occlusion percentage when available.
 - Zoomed-out map pins cluster by screen distance and display the average occlusion percentage for the cluster.
 - Startup loads the ONNX session once and warms it with a dummy image.
@@ -93,21 +96,21 @@ The intended way forward is a self-hosted Pi appliance with a mobile-first web U
 ### Implemented upload workflow
 
 1. User uploads one or more photos from the web UI.
-2. Each file is written into `canopticon_data/ingest/` first.
+2. Each file is written into `data/ingest/` first.
 3. The ingested file is hashed and checked for GPS EXIF metadata.
 4. Duplicate hashes are discarded from ingest and are not processed again.
-5. New files move to `canopticon_data/uploads/`.
+5. New files move to `data/uploads/`.
 6. New files enter the FIFO processing queue.
-7. Finished overlays are written to `canopticon_data/results/`.
+7. Finished overlays are written to `data/results/`.
 8. The browser receives WebSocket updates for `queued`, `processing`, `done`, `duplicate`, and `error` events.
-9. Upload, duplicate, processing, startup, and shutdown events append to `canopticon_data/events.ndjson`.
+9. Upload, duplicate, processing, startup, and shutdown events append to `data/events.ndjson`.
 
 ### Runtime directories
 
-- `canopticon_data/ingest/` is temporary upload scratch space used before hash dedupe.
-- `canopticon_data/uploads/` stores managed originals.
-- `canopticon_data/results/` stores generated overlays.
-- `canopticon_data/events.ndjson` stores append-only lifecycle events.
+- `data/ingest/` is temporary upload scratch space used before hash dedupe.
+- `data/uploads/` stores managed originals.
+- `data/results/` stores generated overlays.
+- `data/events.ndjson` stores append-only lifecycle events.
 - These directories are ignored by git.
 
 ### Deployment shape
@@ -184,6 +187,13 @@ The project is also intended to become a self-contained physical device, not jus
   - upload / ready indicators
   - local branding / idle screen
   - maybe a thumbnail / queue preview
+- Preferred software direction for the TFT is a separate lightweight local UI, not the same browser/mobile app.
+- Current idea:
+  - keep the phone UI as the main web frontend
+  - add a future `screen_ui/` app that talks to the same local backend
+  - bias toward `pygame-ce` or another lightweight renderer for faster boot than Chromium kiosk
+  - keep interactions simple: touch regions, snapshot button, queue/status, recent image preview
+  - preserve an easy desktop-emulated mode for development before the hardware display arrives
 
 ### Power
 

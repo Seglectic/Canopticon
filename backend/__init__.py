@@ -1,0 +1,2 @@
+"""Canopticon application package."""
+

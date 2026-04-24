@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/client/assets/favicon-32.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/client/assets/favicon-192.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/client/assets/favicon-180.png">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/client/vendor/leaflet.css">
   <link rel="stylesheet" href="/client/styles.css">
 </head>
 <body>
@@ -23,6 +23,7 @@
   <main>
     <section class="gallery view active" id="gallery"></section>
     <section class="map-view view" id="mapView">
+      <div class="map-source-bar" id="mapSourceBar"></div>
       <div id="map"></div>
       <div class="map-empty" id="mapEmpty">Photos with GPS metadata will appear here.</div>
     </section>
@@ -52,7 +53,8 @@
     <div class="queue-note" id="queueNote"></div>
   </form>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/client/vendor/leaflet.js"></script>
+  <script src="/client/vendor/protomaps-leaflet.js"></script>
   <script src="/client/app.js"></script>
 </body>
 </html>

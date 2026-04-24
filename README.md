@@ -55,15 +55,18 @@ On a phone, open the host's LAN address with port `8009`.
 ## Mobile upload flow
 
 - Select one or more photos with the bottom `Add Photos` button.
-- Uploads are written to `canopticon_data/ingest/` first.
+- Uploads are written to `data/ingest/` first.
 - Each uploaded file is hashed.
 - Duplicate hashes are discarded and are not processed again.
-- New files move into `canopticon_data/uploads/` and enter a FIFO queue.
-- A single in-process worker runs the warmed ONNX model and writes overlays to `canopticon_data/results/`.
+- New files move into `data/uploads/` and enter a FIFO queue.
+- A single in-process worker runs the warmed ONNX model and writes overlays to `data/results/`.
 - The gallery updates over a WebSocket with `queued`, `processing`, `done`, `duplicate`, and `error` states.
-- Upload and processing lifecycle events are appended to `canopticon_data/events.ndjson`.
+- Upload and processing lifecycle events are appended to `data/events.ndjson`.
 - GPS EXIF metadata is checked after upload; the UI shows whether GPS was found.
-- A bottom-left map tab uses Leaflet with OpenStreetMap tiles to plot GPS-tagged uploads.
+- A bottom-left map tab uses Leaflet to plot GPS-tagged uploads.
+- If `data/maps/florida.pmtiles` is present, the UI exposes an offline Florida vector basemap.
+- A live OpenStreetMap fallback remains available when the Pi has internet uplink.
+- Extraction notes for the current Florida bundle live in [docs/offline-maps.md](/home/segger/Projects/Canopticon/docs/offline-maps.md).
 - Map pins show the occlusion percentage and open the processed photo when tapped.
 - When zoomed out, nearby map pins combine and show the average occlusion percentage for that area.
 
@@ -103,7 +106,7 @@ uv run python canopticon.py batch path/to/photos outputs --device auto
 
 These are local runtime directories and are ignored by git:
 
-- `canopticon_data/`
+- `data/`
 - `outputs/`
 
 `pyproject.toml`, `.python-version`, and `uv.lock` stay in the repository root because `uv` discovers project configuration there.

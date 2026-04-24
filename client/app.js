@@ -7,6 +7,7 @@ const galleryTab = document.querySelector("#galleryTab");
 const mapTab = document.querySelector("#mapTab");
 const mapView = document.querySelector("#mapView");
 const mapEmpty = document.querySelector("#mapEmpty");
+const mapSourceBar = document.querySelector("#mapSourceBar");
 const viewer = document.querySelector("#viewer");
 const viewerImage = document.querySelector("#viewerImage");
 const viewerTitle = document.querySelector("#viewerTitle");
@@ -18,6 +19,9 @@ let activeView = "gallery";
 let map;
 let markerLayer;
 let lastMapFitKey = "";
+let mapConfig;
+let activeMapSourceId;
+let baseLayer;
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
@@ -34,7 +38,7 @@ function cardImage(item) {
 }
 
 function gpsText(item) {
-  return item.gps_present ? "GPS found" : "No GPS";
+  return item.location_label || (item.gps_present ? "GPS found" : "No GPS");
 }
 
 function statusText(item) {
@@ -49,6 +53,9 @@ function statusText(item) {
 
 function detailText(item) {
   const bits = [statusText(item), gpsText(item)];
+  if (item.capture_source === "gpio-trigger") {
+    bits.push("GPIO capture");
+  }
   if (item.gps_present && item.gps_latitude !== null && item.gps_longitude !== null) {
     bits.push(`${item.gps_latitude.toFixed(5)}, ${item.gps_longitude.toFixed(5)}`);
   }
@@ -96,13 +103,73 @@ function ensureMap() {
     zoomControl: true,
     attributionControl: true,
   });
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  }).addTo(map);
   markerLayer = L.layerGroup().addTo(map);
   map.on("zoomend", () => renderMap(false));
   map.setView([20, 0], 2);
+  applyMapSource(activeMapSourceId || mapConfig?.default_source || "live-osm");
+}
+
+function sourceById(sourceId) {
+  return mapConfig?.sources?.find((source) => source.id === sourceId) || null;
+}
+
+function updateMapSourceButtons() {
+  if (!mapSourceBar || !mapConfig?.sources?.length) return;
+  mapSourceBar.innerHTML = mapConfig.sources.map((source) => `
+    <button
+      class="map-source ${source.id === activeMapSourceId ? "active" : ""}"
+      type="button"
+      data-source-id="${escapeHtml(source.id)}"
+    >${escapeHtml(source.label)}</button>
+  `).join("");
+}
+
+function createBaseLayer(source) {
+  if (!window.L || !source) return null;
+  if (source.kind === "pmtiles" && window.protomapsL?.leafletLayer) {
+    return protomapsL.leafletLayer({
+      url: source.url,
+      flavor: "light",
+      lang: "en",
+      noWrap: true,
+      attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>',
+    });
+  }
+  if (source.kind === "raster") {
+    return L.tileLayer(source.url, {
+      maxZoom: source.max_zoom || 19,
+      attribution: source.attribution || "",
+    });
+  }
+  return null;
+}
+
+function applyMapSource(sourceId) {
+  activeMapSourceId = sourceId;
+  const source = sourceById(sourceId) || sourceById("live-osm");
+  if (!source) return;
+  updateMapSourceButtons();
+  if (!map) return;
+
+  if (baseLayer) {
+    map.removeLayer(baseLayer);
+    baseLayer = null;
+  }
+  baseLayer = createBaseLayer(source);
+  if (!baseLayer && source.id !== "live-osm") {
+    activeMapSourceId = "live-osm";
+    updateMapSourceButtons();
+    baseLayer = createBaseLayer(sourceById("live-osm"));
+  }
+  if (baseLayer) {
+    baseLayer.addTo(map);
+  }
+
+  if (source.bounds?.length === 2 && !Array.from(items.values()).some(itemHasGps)) {
+    map.fitBounds(source.bounds, { padding: [18, 18], maxZoom: source.max_zoom || 12 });
+  } else if (source.center?.length === 2) {
+    map.setView(source.center, source.zoom || map.getZoom());
+  }
 }
 
 function buildClusters(mapped) {
@@ -232,6 +299,17 @@ async function loadItems() {
   render();
 }
 
+async function loadMapConfig() {
+  const response = await fetch("/api/map-config");
+  if (!response.ok) return;
+  mapConfig = await response.json();
+  activeMapSourceId = mapConfig.default_source;
+  updateMapSourceButtons();
+  if (map) {
+    applyMapSource(activeMapSourceId);
+  }
+}
+
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -251,6 +329,9 @@ function connect() {
     if (data.type === "duplicate") {
       statusEl.textContent = `Duplicate skipped: ${data.filename}`;
     }
+    if (data.type === "notice") {
+      statusEl.textContent = data.message;
+    }
     render();
   });
 }
@@ -266,6 +347,11 @@ mapTab.addEventListener("click", () => setView("map"));
 viewerClose.addEventListener("click", () => viewer.close());
 viewer.addEventListener("click", (event) => {
   if (event.target === viewer) viewer.close();
+});
+mapSourceBar.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-source-id]");
+  if (!button) return;
+  applyMapSource(button.dataset.sourceId);
 });
 
 input.addEventListener("change", async () => {
@@ -286,5 +372,5 @@ input.addEventListener("change", async () => {
   render();
 });
 
-loadItems();
+loadMapConfig().finally(loadItems);
 connect();
