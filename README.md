@@ -52,6 +52,30 @@ http://localhost:8009
 
 On a phone, open the host's LAN address with port `8009`.
 
+## Hardware plugins
+
+Board-specific hardware lives under [`backend/plugins/`](./backend/plugins/). Each subfolder is one plugin.
+
+Current plugin:
+
+- `Pi4B`
+  - launches a Pi-side runtime for the round GC9A01 display, button, and camera
+  - shows a Wi-Fi QR screen on boot
+  - switches to a portal QR for 10 seconds when a new client joins the AP
+  - enters camera preview on button press and posts the next captured photo back into the normal ingest queue
+
+Run it with:
+
+```bash
+uv run python canopticon.py serve --plugin Pi4B
+```
+
+Notes:
+
+- The Pi4B plugin is meant to run the hardware subprocess with `/usr/bin/python3`, not as root.
+- On the Pi, install `python3-qrcode` once if it is missing.
+- If no plugin is selected, Canopticon keeps using the generic GPIO trigger helper path.
+
 ## Mobile upload flow
 
 - Select one or more photos with the bottom `Add Photos` button.
@@ -65,6 +89,7 @@ On a phone, open the host's LAN address with port `8009`.
 - GPS EXIF metadata is checked after upload; the UI shows whether GPS was found.
 - A bottom-left map tab uses Leaflet to plot GPS-tagged uploads.
 - On startup, Canopticon will fetch/build the configured offline state PMTiles bundle into `data/maps/` if it is missing.
+- Automatic PMTiles bootstrap now works on both Linux and macOS.
 - A live OpenStreetMap fallback remains available when the Pi has internet uplink.
 - Extraction notes for the current state bundle live in [docs/offline-maps.md](/home/segger/Projects/Canopticon/docs/offline-maps.md).
 - Map pins show the occlusion percentage and open the processed photo when tapped.

@@ -6,11 +6,12 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import secrets
 import subprocess
 from typing import Any
 import uuid
 
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Header, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import onnxruntime as ort
@@ -18,6 +19,8 @@ import onnxruntime as ort
 from .inference import load_model, process_image_file, warm_model
 from .maps import ensure_state_map, state_map_config
 from .models import ImageItem, item_to_payload
+from .plugins import PluginContext, load_plugin
+from .plugins.base import ManagedPlugin
 from .settings import SUPPORTED_EXTS, WebConfig
 from .storage import (
     create_thumbnail,
@@ -28,6 +31,7 @@ from .storage import (
     manual_location_metadata,
     read_latest_processing_results,
     safe_filename,
+    save_bytes_to_ingest,
     save_upload_to_ingest,
 )
 
@@ -75,6 +79,8 @@ class WebState:
         self.accepting_uploads = False
         self.loop: asyncio.AbstractEventLoop | None = None
         self.capture_helper: subprocess.Popen[str] | None = None
+        self.plugin_capture_token = secrets.token_urlsafe(24)
+        self.plugin: ManagedPlugin | None = None
 
 
 def remove_item_files(state: WebState, item: ImageItem) -> None:
@@ -267,6 +273,48 @@ async def handle_gpio_capture(state: WebState) -> None:
                     "message": f"Snapshot skipped as duplicate: {duplicate['filename']}",
                 },
             )
+
+
+async def handle_plugin_capture(
+    state: WebState,
+    *,
+    filename: str,
+    payload: bytes,
+    capture_source: str,
+) -> tuple[dict[str, Any], dict[str, str] | None]:
+    if not state.accepting_uploads:
+        raise HTTPException(status_code=503, detail="Server is shutting down")
+    if not payload:
+        raise HTTPException(status_code=400, detail="Capture payload was empty")
+
+    ingest_path, digest, size = await asyncio.to_thread(
+        save_bytes_to_ingest,
+        filename,
+        payload,
+        state.ingest_dir,
+    )
+    if size == 0:
+        ingest_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Capture payload was empty")
+
+    metadata = manual_location_metadata(capture_source=capture_source)
+    log_event(
+        state.event_log,
+        "plugin_capture_received",
+        filename=filename,
+        digest=digest,
+        size=size,
+        capture_source=capture_source,
+        location_tag=metadata["location_tag"],
+    )
+    return await register_ingested_photo(
+        state,
+        original_name=filename,
+        ingest_path=ingest_path,
+        digest=digest,
+        metadata=metadata,
+        event_prefix="plugin_capture",
+    )
 
 
 def start_gpio_trigger_helper(state: WebState) -> None:
@@ -555,7 +603,19 @@ def create_app(config: WebConfig) -> FastAPI:
         await asyncio.to_thread(warm_model, state.session)
         index_existing_uploads(state)
         state.accepting_uploads = True
-        start_gpio_trigger_helper(state)
+        if config.plugin:
+            plugin = load_plugin(config.plugin)
+            context = PluginContext(
+                config=config,
+                event_log=state.event_log,
+                base_url=f"http://127.0.0.1:{config.port}",
+                capture_token=state.plugin_capture_token,
+            )
+            plugin.start(context)
+            state.plugin = plugin
+            log_event(state.event_log, "plugin_started", plugin=plugin.plugin_id)
+        else:
+            start_gpio_trigger_helper(state)
         state.worker_task = asyncio.create_task(processing_worker(state))
         print(f"Canopticon web app listening on http://{config.host}:{config.port}", flush=True)
         try:
@@ -579,6 +639,10 @@ def create_app(config: WebConfig) -> FastAPI:
                     state.capture_helper.kill()
                     state.capture_helper.wait(timeout=3)
                 state.capture_helper = None
+            if state.plugin is not None:
+                state.plugin.stop()
+                log_event(state.event_log, "plugin_stopped", plugin=state.plugin.plugin_id)
+                state.plugin = None
             state.session = None
             state.websockets.clear()
             state.loop = None
@@ -657,6 +721,24 @@ def create_app(config: WebConfig) -> FastAPI:
     async def capture_photo() -> Response:
         await handle_gpio_capture(state)
         return Response(status_code=204)
+
+    @app.post("/api/plugin-capture")
+    async def plugin_capture(
+        request: Request,
+        x_canopticon_plugin_token: str | None = Header(default=None),
+        x_canopticon_filename: str | None = Header(default=None),
+        x_canopticon_capture_source: str | None = Header(default=None),
+    ) -> JSONResponse:
+        if x_canopticon_plugin_token != state.plugin_capture_token:
+            raise HTTPException(status_code=403, detail="Invalid plugin token")
+        payload = await request.body()
+        item, duplicate = await handle_plugin_capture(
+            state,
+            filename=x_canopticon_filename or "plugin-capture.jpg",
+            payload=payload,
+            capture_source=x_canopticon_capture_source or "plugin-capture",
+        )
+        return JSONResponse({"item": item, "duplicate": duplicate})
 
     @app.delete("/api/items/{image_id}")
     async def delete_item(image_id: str) -> Response:

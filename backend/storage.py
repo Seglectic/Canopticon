@@ -180,3 +180,16 @@ async def save_upload_to_ingest(upload: UploadFile, ingest_dir: Path) -> tuple[P
             file.write(chunk)
 
     return ingest_path, digest.hexdigest(), size
+
+
+def save_bytes_to_ingest(
+    filename: str,
+    payload: bytes,
+    ingest_dir: Path,
+) -> tuple[Path, str, int]:
+    safe_name = safe_filename(filename)
+    suffix = Path(safe_name).suffix.lower() or ".jpg"
+    ingest_path = ingest_dir / f"{uuid.uuid4().hex}{suffix}"
+    ingest_dir.mkdir(parents=True, exist_ok=True)
+    ingest_path.write_bytes(payload)
+    return ingest_path, hash_file(ingest_path), len(payload)

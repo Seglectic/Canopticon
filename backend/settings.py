@@ -35,3 +35,4 @@ class WebConfig:
     maps_dir: Path
     thumbnail_size: int
     map_state: str
+    plugin: str | None

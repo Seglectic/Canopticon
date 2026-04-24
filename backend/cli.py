@@ -76,6 +76,7 @@ def serve(args: argparse.Namespace) -> None:
         maps_dir=args.maps_dir,
         thumbnail_size=args.thumbnail_size,
         map_state=args.map_state,
+        plugin=args.plugin,
     )
     app = create_app(config)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
@@ -131,6 +132,12 @@ def main() -> None:
         type=int,
         default=DEFAULT_THUMBNAIL_SIZE,
         help="Square thumbnail size in pixels",
+    )
+    serve_parser.add_argument(
+        "--plugin",
+        type=str,
+        default=None,
+        help="Optional hardware plugin folder name from backend/plugins, for example Pi4B",
     )
     add_processing_options(serve_parser)
 
