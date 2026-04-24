@@ -390,13 +390,24 @@ class LedController:
 
 
 def parse_lease_clients() -> set[tuple[str, str]]:
-    if not LEASES_PATH.exists():
-        return set()
-    clients: set[tuple[str, str]] = set()
     try:
         lines = LEASES_PATH.read_text(encoding="utf-8").splitlines()
+    except PermissionError:
+        result = subprocess.run(
+            ["sudo", "-n", "cat", str(LEASES_PATH)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return set()
+        lines = result.stdout.splitlines()
+    except FileNotFoundError:
+        return set()
     except Exception:
         return set()
+
+    clients: set[tuple[str, str]] = set()
     for line in lines:
         parts = line.split()
         if len(parts) < 3:
