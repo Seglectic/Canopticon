@@ -355,6 +355,8 @@ body.map-active .map-view.active {
 }
 
 .map-bubble-svg {
+  position: relative;
+  z-index: 1;
   width: 74px;
   height: 90px;
   display: block;
@@ -377,9 +379,9 @@ body.map-active .map-view.active {
 .map-bubble-badge,
 .map-bubble-count {
   position: absolute;
-  z-index: 2;
+  z-index: 4;
   right: -2px;
-  bottom: 18px;
+  top: -6px;
   min-width: 24px;
   height: 24px;
   display: grid;
@@ -459,12 +461,26 @@ body.map-active .map-view.active {
   font-size: 0.72rem;
 }
 
+.occlusion-chip {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  z-index: 2;
+  color: #f8f8f2;
+  font-family: "Oxanium", ui-sans-serif, system-ui, sans-serif;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
 .status-chip {
   position: absolute;
-  top: 6px;
+  bottom: 6px;
+  top: auto;
   right: 6px;
-  width: 30px;
-  height: 30px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
   border-radius: 999px;
@@ -490,8 +506,8 @@ body.map-active .map-view.active {
 }
 
 .status-chip-icon {
-  width: 16px;
-  height: 16px;
+  width: 11px;
+  height: 11px;
   display: block;
   background: currentColor;
   mask-repeat: no-repeat;
@@ -551,11 +567,15 @@ body.map-active .map-view.active {
   width: 100%;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 196px) auto;
+  grid-template-columns: auto minmax(0, 196px) auto;
   gap: 10px;
   align-items: center;
-  justify-content: end;
+  justify-content: space-between;
   min-height: 64px;
+}
+
+.upload-inner .status {
+  justify-self: start;
 }
 
 .tabs {
@@ -633,17 +653,16 @@ body.map-active .tabs::before {
   width: 100%;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 196px) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  justify-content: end;
   padding: 0;
 }
 
 .tray-footer-left {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 0;
   min-width: 0;
 }
 
@@ -764,16 +783,29 @@ input[type="file"] {
   padding: 10px 14px 12px;
 }
 
+.viewer-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.viewer-stat-value {
+  color: var(--text);
+  font-family: "Oxanium", ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(2.2rem, 6vw, 3.8rem);
+  font-weight: 800;
+  line-height: 0.9;
+  white-space: nowrap;
+}
+
 .viewer-title {
   overflow-wrap: anywhere;
   font-family: "Oxanium", ui-sans-serif, system-ui, sans-serif;
-  font-weight: 900;
-}
-
-.viewer-detail {
-  color: var(--muted);
-  font-size: 0.84rem;
-  line-height: 1.35;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: right;
 }
 
 .viewer-footer {
@@ -781,6 +813,7 @@ input[type="file"] {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
+  margin-top: 6px;
 }
 
 .viewer-coords {
@@ -793,6 +826,7 @@ input[type="file"] {
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-top: 6px;
 }
 
 .viewer-map-link {

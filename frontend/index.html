@@ -41,9 +41,9 @@
     </button>
     <img id="viewerImage" alt="">
     <div class="viewer-meta">
-      <div class="viewer-copy">
+      <div class="viewer-header">
+        <div class="viewer-stat-value" id="viewerStatValue">--</div>
         <div class="viewer-title" id="viewerTitle"></div>
-        <div class="viewer-detail" id="viewerDetail"></div>
       </div>
       <div class="viewer-footer">
         <div class="viewer-coords" id="viewerCoords"></div>
@@ -66,6 +66,10 @@
     </button>
     <div class="tray-panel" id="trayPanel">
       <div class="upload-inner">
+        <div class="status disconnected" id="status" role="status" aria-live="polite" aria-label="Live updates connecting">
+          <span class="status-icon" aria-hidden="true"></span>
+          <span class="sr-only">Live updates connecting</span>
+        </div>
         <div class="tabs" role="tablist" aria-label="Views">
           <button class="tab active" id="galleryTab" type="button" role="tab" aria-selected="true">Gallery</button>
           <button class="tab" id="mapTab" type="button" role="tab" aria-selected="false">Map</button>
@@ -77,10 +81,6 @@
       </div>
       <div class="tray-footer">
         <div class="tray-footer-left">
-          <div class="status disconnected" id="status" role="status" aria-live="polite" aria-label="Live updates connecting">
-            <span class="status-icon" aria-hidden="true"></span>
-            <span class="sr-only">Live updates connecting</span>
-          </div>
           <div class="map-coords" id="mapCoords"></div>
         </div>
         <div class="queue-note" id="queueNote"></div>

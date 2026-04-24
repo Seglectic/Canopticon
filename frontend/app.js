@@ -20,7 +20,7 @@ const mapEmpty = document.querySelector("#mapEmpty");
 const viewer = document.querySelector("#viewer");
 const viewerImage = document.querySelector("#viewerImage");
 const viewerTitle = document.querySelector("#viewerTitle");
-const viewerDetail = document.querySelector("#viewerDetail");
+const viewerStatValue = document.querySelector("#viewerStatValue");
 const viewerCoords = document.querySelector("#viewerCoords");
 const viewerMapLink = document.querySelector("#viewerMapLink");
 const viewerClose = document.querySelector("#viewerClose");
@@ -139,9 +139,6 @@ function gpsText(item) {
 }
 
 function statusText(item) {
-  if (item.status === "done" && item.occluded_pct !== null) {
-    return `Occluded ${item.occluded_pct.toFixed(1)}%`;
-  }
   if (item.status === "done") return "Processed";
   if (item.status === "error") return item.error || "Processing failed";
   if (item.status === "processing") return "Processing";
@@ -149,12 +146,12 @@ function statusText(item) {
 }
 
 function detailText(item) {
-  const bits = [statusText(item), gpsText(item)];
+  const bits = [];
+  if (!item.gps_present) {
+    bits.push(gpsText(item));
+  }
   if (item.capture_source === "gpio-trigger") {
     bits.push("GPIO capture");
-  }
-  if (item.gps_present && item.gps_latitude !== null && item.gps_longitude !== null) {
-    bits.push(`${item.gps_latitude.toFixed(5)}, ${item.gps_longitude.toFixed(5)}`);
   }
   return bits.join(" | ");
 }
@@ -200,6 +197,13 @@ function mapLatLngFromTouch(touch) {
 function coordsText(item) {
   if (!itemHasGps(item)) return "";
   return `${Number(item.gps_latitude).toFixed(5)}, ${Number(item.gps_longitude).toFixed(5)}`;
+}
+
+function occlusionText(item) {
+  if (item.occluded_pct === null || item.occluded_pct === undefined) {
+    return item.status === "done" ? "--" : "...";
+  }
+  return `${Math.round(item.occluded_pct)}%`;
 }
 
 function clusterThumbItems(cluster) {
@@ -265,8 +269,8 @@ function openViewer(id) {
   if (viewerImage.complete) {
     window.requestAnimationFrame(() => viewerImage.classList.remove("is-loading"));
   }
+  viewerStatValue.textContent = occlusionText(item);
   viewerTitle.textContent = item.filename;
-  viewerDetail.textContent = detailText(item);
   viewerCoords.textContent = coordsText(item);
   viewerMapLink.hidden = !itemHasGps(item);
   viewer.showModal();
@@ -473,12 +477,17 @@ function statusChip(item) {
   `;
 }
 
+function occlusionChip(item) {
+  return `<span class="occlusion-chip" aria-hidden="true">${escapeHtml(occlusionText(item))}</span>`;
+}
+
 function render() {
   const list = Array.from(items.values()).sort((left, right) => left.id.localeCompare(right.id));
   empty.style.display = list.length || activeView === "map" ? "none" : "grid";
   gallery.innerHTML = list.map((item) => `
     <button class="tile" type="button" data-id="${escapeHtml(item.id)}" aria-label="${escapeHtml(item.filename)}">
       <img src="${cardImage(item)}" alt="" loading="lazy" decoding="async">
+      ${occlusionChip(item)}
       ${statusChip(item)}
       <span class="tile-overlay">
         <span class="tile-name">${escapeHtml(item.filename)}</span>
@@ -493,7 +502,8 @@ function render() {
     const item = items.get(activeViewerItemId);
     if (item) {
       viewerImage.src = item.result_url || item.uploaded_url;
-      viewerDetail.textContent = detailText(item);
+      viewerStatValue.textContent = occlusionText(item);
+      viewerTitle.textContent = item.filename;
       viewerCoords.textContent = coordsText(item);
       viewerMapLink.hidden = !itemHasGps(item);
     }
