@@ -114,4 +114,5 @@ def extract_state_map(pmtiles_bin: Path, config: StateMapConfig, output_path: Pa
             ],
             check=True,
         )
-        shutil.move(str(temp_output), str(output_path))
+        shutil.copyfile(temp_output, output_path)
+        temp_output.unlink(missing_ok=True)
