@@ -81,6 +81,12 @@ class WebState:
         self.capture_helper: subprocess.Popen[str] | None = None
         self.plugin_capture_token = secrets.token_urlsafe(24)
         self.plugin: ManagedPlugin | None = None
+        self.portal_event_counter = 0
+        self.processing_done_counter = 0
+
+
+def mark_portal_event(state: WebState) -> None:
+    state.portal_event_counter += 1
 
 
 def remove_item_files(state: WebState, item: ImageItem) -> None:
@@ -476,6 +482,7 @@ async def processing_worker(state: WebState) -> None:
                     occluded_pct=round(occluded_pct, 4),
                     elapsed_s=round(elapsed_s, 4),
                 )
+                state.processing_done_counter += 1
 
             if payload is None:
                 result_path.unlink(missing_ok=True)
@@ -655,6 +662,7 @@ def create_app(config: WebConfig) -> FastAPI:
 
     @app.get("/")
     async def index() -> FileResponse:
+        mark_portal_event(state)
         return FileResponse(config.frontend_dir / "index.html", headers=no_cache_headers())
 
     @app.get("/api/items")
@@ -740,6 +748,22 @@ def create_app(config: WebConfig) -> FastAPI:
         )
         return JSONResponse({"item": item, "duplicate": duplicate})
 
+    @app.get("/api/plugin-state")
+    async def plugin_state(
+        x_canopticon_plugin_token: str | None = Header(default=None),
+    ) -> JSONResponse:
+        if x_canopticon_plugin_token != state.plugin_capture_token:
+            raise HTTPException(status_code=403, detail="Invalid plugin token")
+        async with state.lock:
+            processing_active = any(item.status == "processing" for item in state.items.values())
+        return JSONResponse(
+            {
+                "processing_active": processing_active,
+                "portal_event_counter": state.portal_event_counter,
+                "processing_done_counter": state.processing_done_counter,
+            }
+        )
+
     @app.delete("/api/items/{image_id}")
     async def delete_item(image_id: str) -> Response:
         async with state.lock:
@@ -763,6 +787,7 @@ def create_app(config: WebConfig) -> FastAPI:
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
         await websocket.accept()
+        mark_portal_event(state)
         state.websockets.add(websocket)
         async with state.lock:
             items = [item_to_payload(item) for item in state.items.values()]

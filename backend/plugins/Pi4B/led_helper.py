@@ -51,6 +51,33 @@ def pulse_blue(strip: PixelStrip) -> None:
     fill(strip, 0, 0, 0)
 
 
+def pulse_green(strip: PixelStrip) -> None:
+    steps = 18
+    duration = 0.7
+    for step in range(steps):
+        phase = step / (steps - 1)
+        intensity = math.sin(phase * math.pi)
+        fill(strip, round(20 * intensity), round(255 * intensity), round(70 * intensity))
+        time.sleep(duration / steps)
+    fill(strip, 0, 0, 0)
+
+
+def page_glow(strip: PixelStrip) -> None:
+    steps = 26
+    peak = 0.18
+    decay = 0.9
+    for step in range(steps):
+        phase = step / (steps - 1)
+        if phase <= peak:
+            intensity = phase / peak
+        else:
+            tail = (phase - peak) / (1.0 - peak)
+            intensity = pow(max(0.0, 1.0 - tail), decay)
+        fill(strip, round(30 * intensity), round(170 * intensity), round(255 * intensity))
+        time.sleep(0.035)
+    fill(strip, 0, 0, 0)
+
+
 def chase_purple(strip: PixelStrip) -> None:
     running = True
 
@@ -61,21 +88,35 @@ def chase_purple(strip: PixelStrip) -> None:
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
-    lead = 3
-    position = 0
+    purple_lead = 4
+    purple_position = 0
+    red_position = strip.numPixels() // 2
     while running:
         for index in range(strip.numPixels()):
-            distance = (index - position) % strip.numPixels()
-            if distance >= lead:
-                strip.setPixelColor(index, Color(0, 0, 0))
-                continue
-            intensity = (lead - distance) / lead
+            purple_distance = (index - purple_position) % strip.numPixels()
+            purple_red = 0
+            purple_blue = 0
+            if purple_distance < purple_lead:
+                intensity = (purple_lead - purple_distance) / purple_lead
+                purple_red = round(120 * intensity)
+                purple_blue = round(255 * intensity)
+
+            red_distance = (red_position - index) % strip.numPixels()
+            red_red = 0
+            if red_distance < 2:
+                red_red = round(255 * ((2 - red_distance) / 2))
+
             strip.setPixelColor(
                 index,
-                Color(round(120 * intensity), 0, round(255 * intensity)),
+                Color(
+                    min(255, purple_red + red_red),
+                    0,
+                    purple_blue,
+                ),
             )
         strip.show()
-        position = (position + 1) % strip.numPixels()
+        purple_position = (purple_position + 1) % strip.numPixels()
+        red_position = (red_position - 1) % strip.numPixels()
         time.sleep(0.08)
 
     fill(strip, 0, 0, 0)
@@ -86,6 +127,12 @@ def main() -> int:
     strip = build_strip()
     if command == "pulse-blue":
         pulse_blue(strip)
+        return 0
+    if command == "pulse-green":
+        pulse_green(strip)
+        return 0
+    if command == "page-glow":
+        page_glow(strip)
         return 0
     if command == "chase-purple":
         chase_purple(strip)

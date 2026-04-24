@@ -43,6 +43,8 @@ WIFI_BACKGROUND = (255, 255, 255)
 PORTAL_BACKGROUND = (11, 72, 132)
 BOOT_BACKGROUND = (244, 247, 251)
 PROCESSING_POLL_INTERVAL_SEC = 0.8
+SLEEP_TIMEOUT_SEC = 120.0
+LEASES_PATH = Path(f"/var/lib/NetworkManager/dnsmasq-{AP_INTERFACE}.leases")
 
 BASE_URL = os.environ["CANOPTICON_PLUGIN_BASE_URL"]
 CAPTURE_URL = os.environ["CANOPTICON_PLUGIN_CAPTURE_URL"]
@@ -359,6 +361,12 @@ class LedController:
     def pulse_blue(self) -> None:
         self._spawn("pulse-blue")
 
+    def pulse_green(self) -> None:
+        self._spawn("pulse-green")
+
+    def page_glow(self) -> None:
+        self._spawn("page-glow")
+
     def start_purple_chase(self) -> None:
         if self.animation_process is not None and self.animation_process.poll() is None:
             return
@@ -381,7 +389,29 @@ class LedController:
         self._spawn("off")
 
 
+def parse_lease_clients() -> set[tuple[str, str]]:
+    if not LEASES_PATH.exists():
+        return set()
+    clients: set[tuple[str, str]] = set()
+    try:
+        lines = LEASES_PATH.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return set()
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        mac_address = parts[1].lower()
+        ip_address = parts[2]
+        clients.add((ip_address, mac_address))
+    return clients
+
+
 def current_clients() -> set[tuple[str, str]]:
+    lease_clients = parse_lease_clients()
+    if lease_clients:
+        return lease_clients
+
     result = subprocess.run(
         ["ip", "neigh", "show", "dev", AP_INTERFACE],
         capture_output=True,
@@ -427,14 +457,20 @@ def server_ready() -> bool:
         return False
 
 
-def processing_active() -> bool:
+def plugin_state() -> dict[str, Any]:
     try:
-        with request.urlopen(f"{BASE_URL}/api/items", timeout=1.5) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        req = request.Request(
+            f"{BASE_URL}/api/plugin-state",
+            headers={"X-Canopticon-Plugin-Token": CAPTURE_TOKEN},
+        )
+        with request.urlopen(req, timeout=1.5) as response:
+            return json.loads(response.read().decode("utf-8"))
     except Exception:
-        return False
-    items = payload.get("items", [])
-    return any(item.get("status") == "processing" for item in items)
+        return {
+            "processing_active": False,
+            "portal_event_counter": 0,
+            "processing_done_counter": 0,
+        }
 
 
 def encode_jpeg(frame: np.ndarray) -> bytes:
@@ -450,6 +486,10 @@ def wait_for_button_release() -> None:
         if GPIO.input(BUTTON_PIN) == GPIO.HIGH:
             return
         time.sleep(0.01)
+
+
+def screen_off_frame() -> Image.Image:
+    return Image.new("RGB", (DISPLAY_SIZE, DISPLAY_SIZE), (0, 0, 0))
 
 
 def main() -> None:
@@ -484,6 +524,12 @@ def main() -> None:
     display.show_image(current_screen)
     last_processing_poll = 0.0
     processing_leds_active = False
+    pending_done_pulse = False
+    last_portal_event_counter = 0
+    last_processing_done_counter = 0
+    last_button_activity = time.monotonic()
+    sleeping = False
+    sleep_frame = screen_off_frame()
 
     log_event("plugin_runtime_started", ap_ssid=AP_SSID, portal_url=PORTAL_URL)
 
@@ -504,9 +550,38 @@ def main() -> None:
                 time.sleep(0.05)
                 continue
 
+            button_activated = False
+            button_pressed = GPIO.input(BUTTON_PIN) == GPIO.LOW
+            if button_pressed and (now - last_button_press) >= BUTTON_DEBOUNCE_SEC:
+                last_button_press = now
+                wait_for_button_release()
+                last_button_activity = time.monotonic()
+                button_activated = True
+                if sleeping:
+                    sleeping = False
+                    mode = "wifi"
+                    current_screen = blend_sequence(display, sleep_frame, wifi_qr)
+                    continue
+
             if now - last_processing_poll >= PROCESSING_POLL_INTERVAL_SEC:
                 last_processing_poll = now
-                active = processing_active()
+                state = plugin_state()
+                active = bool(state.get("processing_active"))
+                portal_event_counter = int(state.get("portal_event_counter", 0))
+                processing_done_counter = int(state.get("processing_done_counter", 0))
+
+                if portal_event_counter > last_portal_event_counter:
+                    last_portal_event_counter = portal_event_counter
+                    if not active and not sleeping:
+                        leds.page_glow()
+
+                if processing_done_counter > last_processing_done_counter:
+                    last_processing_done_counter = processing_done_counter
+                    if active:
+                        pending_done_pulse = True
+                    elif not sleeping:
+                        leds.pulse_green()
+
                 if active and not processing_leds_active:
                     leds.start_purple_chase()
                     processing_leds_active = True
@@ -515,11 +590,21 @@ def main() -> None:
                     leds.off()
                     processing_leds_active = False
                     log_event("plugin_processing_leds_stopped")
+                    if pending_done_pulse and not sleeping:
+                        leds.pulse_green()
+                        pending_done_pulse = False
 
-            button_pressed = GPIO.input(BUTTON_PIN) == GPIO.LOW
-            if button_pressed and (now - last_button_press) >= BUTTON_DEBOUNCE_SEC:
-                last_button_press = now
-                wait_for_button_release()
+            if not sleeping and mode in {"wifi", "portal"} and (now - last_button_activity) >= SLEEP_TIMEOUT_SEC:
+                sleeping = True
+                current_screen = blend_sequence(display, current_screen, sleep_frame)
+                leds.off()
+                continue
+
+            if sleeping:
+                time.sleep(0.1)
+                continue
+
+            if button_activated:
                 if mode != "preview":
                     if preview is None:
                         preview = CameraPreview()
