@@ -817,8 +817,8 @@ input[type="file"] {
 
 .viewer-delete {
   position: absolute;
-  top: 10px;
-  left: 10px;
+  right: 10px;
+  bottom: 84px;
   width: 38px;
   height: 38px;
   display: grid;
@@ -828,6 +828,7 @@ input[type="file"] {
   color: #f8f8f2;
   background: rgba(92, 63, 179, 0.82);
   cursor: pointer;
+  z-index: 2;
 }
 
 .viewer-meta {

@@ -38,15 +38,19 @@ PREVIEW_SIZE = (1280, 720)
 LOGO_WIDTH = 84
 LOGO_BOB_AMPLITUDE = 8
 LOGO_BOB_PERIOD_SEC = 1.8
+BRAND_LOGO_WIDTH = 72
 FADE_STEPS = 12
 FADE_FRAME_DELAY_SEC = 0.035
 WIFI_BACKGROUND = (255, 255, 255)
 PORTAL_BACKGROUND = (11, 72, 132)
 BOOT_BACKGROUND = (244, 247, 251)
+BRAND_BACKGROUND = (244, 247, 251)
 PROCESSING_POLL_INTERVAL_SEC = 0.8
 CLIENT_POLL_INTERVAL_SEC = 1.0
 SLEEP_TIMEOUT_SEC = 120.0
 IDLE_LOOP_DELAY_SEC = 0.05
+IRIS_STEPS = 14
+IRIS_FRAME_DELAY_SEC = 0.03
 
 BASE_URL = os.environ["CANOPTICON_PLUGIN_BASE_URL"]
 CAPTURE_URL = os.environ["CANOPTICON_PLUGIN_CAPTURE_URL"]
@@ -247,6 +251,7 @@ def build_qr_image(
     background: tuple[int, int, int],
     caption: str,
     text_fill: tuple[int, int, int],
+    qr_fill: tuple[int, int, int] | str = "black",
     qr_background: tuple[int, int, int] | None = None,
 ) -> Image.Image:
     canvas = Image.new("RGB", (DISPLAY_SIZE, DISPLAY_SIZE), background)
@@ -254,7 +259,7 @@ def build_qr_image(
     qr.add_data(payload)
     qr.make(fit=True)
     qr_back_color = qr_background if qr_background is not None else background
-    qr_image = qr.make_image(fill_color="black", back_color=qr_back_color).convert("RGB")
+    qr_image = qr.make_image(fill_color=qr_fill, back_color=qr_back_color).convert("RGB")
     qr_image = qr_image.resize((QR_BOX_SIZE, QR_BOX_SIZE), Image.Resampling.NEAREST)
     qr_x = (DISPLAY_SIZE - QR_BOX_SIZE) // 2
     qr_y = SAFE_MARGIN + 6
@@ -316,6 +321,67 @@ def status_card(background: tuple[int, int, int], title: str, body: str) -> Imag
     draw_centered_text(draw, title, y=86, font=FONT, fill="black")
     draw_centered_text(draw, body, y=118, font=SMALL_FONT, fill="black")
     return canvas
+
+
+def build_brand_frame() -> Image.Image:
+    canvas = Image.new("RGBA", (DISPLAY_SIZE, DISPLAY_SIZE), BRAND_BACKGROUND + (255,))
+    draw = ImageDraw.Draw(canvas)
+    if LOGO is not None:
+        brand_logo = LOGO.resize(
+            (BRAND_LOGO_WIDTH, round((BRAND_LOGO_WIDTH / LOGO.width) * LOGO.height)),
+            Image.Resampling.LANCZOS,
+        )
+        logo_x = (DISPLAY_SIZE - brand_logo.width) // 2
+        canvas.alpha_composite(brand_logo, (logo_x, 54))
+
+    draw_centered_text(draw, "Seglectic", y=144, font=FONT, fill=(16, 24, 32))
+    draw_centered_text(draw, "Systems", y=168, font=FONT, fill=(56, 72, 88))
+    return canvas.convert("RGB")
+
+
+def iris_close_sequence(
+    display: GC9A01Display,
+    source_image: Image.Image,
+    *,
+    overlay: tuple[int, int, int] = (8, 10, 16),
+) -> Image.Image:
+    source = source_image.convert("RGB")
+    max_radius = math.sqrt(2) * DISPLAY_SIZE / 2
+    for step in range(IRIS_STEPS):
+        progress = (step + 1) / IRIS_STEPS
+        radius = max_radius * (1.0 - progress)
+        frame = Image.new("RGB", (DISPLAY_SIZE, DISPLAY_SIZE), overlay)
+        mask = Image.new("L", (DISPLAY_SIZE, DISPLAY_SIZE), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        if radius > 0:
+            cx = DISPLAY_SIZE / 2
+            cy = DISPLAY_SIZE / 2
+            mask_draw.ellipse(
+                (
+                    round(cx - radius),
+                    round(cy - radius),
+                    round(cx + radius),
+                    round(cy + radius),
+                ),
+                fill=255,
+            )
+        frame.paste(source, mask=mask)
+        display.show_image(frame)
+        time.sleep(IRIS_FRAME_DELAY_SEC)
+    return Image.new("RGB", (DISPLAY_SIZE, DISPLAY_SIZE), overlay)
+
+
+def play_capture_success_sequence(
+    display: GC9A01Display,
+    captured_frame: np.ndarray,
+    return_screen: Image.Image,
+) -> Image.Image:
+    iris_source = crop_preview(captured_frame)
+    current = iris_close_sequence(display, iris_source)
+    brand_frame = build_brand_frame()
+    current = blend_sequence(display, current, brand_frame)
+    time.sleep(0.4)
+    return blend_sequence(display, current, return_screen)
 
 
 def blend_sequence(
@@ -576,7 +642,8 @@ def main() -> None:
         background=PORTAL_BACKGROUND,
         caption="Web Portal",
         text_fill=(255, 255, 255),
-        qr_background=(255, 255, 255),
+        qr_fill=(255, 255, 255),
+        qr_background=PORTAL_BACKGROUND,
     )
     known_clients: set[tuple[str, str]] = set()
     last_client_poll = 0.0
@@ -686,6 +753,7 @@ def main() -> None:
                     frame = preview.read()
                     image_bytes = encode_jpeg(frame)
                     filename = f"pi4b-{datetime.now().strftime('%Y%m%d-%H%M%S')}.jpg"
+                    should_return_via_fade = True
                     current_screen = status_card((224, 245, 232), "Saving Photo", "Uploading to Canopticon")
                     display.show_image(current_screen)
                     try:
@@ -695,18 +763,21 @@ def main() -> None:
                         current_screen = status_card((255, 228, 228), "Capture Failed", "Check Canopticon app")
                         display.show_image(current_screen)
                         time.sleep(1.5)
+                        should_return_via_fade = False
                     else:
                         log_event("plugin_capture_posted", filename=filename, response=response)
                         if response.get("duplicate"):
                             current_screen = status_card((255, 244, 214), "Duplicate", filename)
+                            display.show_image(current_screen)
+                            time.sleep(1.2)
+                            should_return_via_fade = False
                         else:
-                            current_screen = status_card((224, 245, 232), "Photo Saved", filename)
-                        display.show_image(current_screen)
-                        time.sleep(1.2)
+                            current_screen = play_capture_success_sequence(display, frame, wifi_qr)
                     preview.close()
                     preview = None
                     mode = "wifi"
-                    current_screen = blend_sequence(display, current_screen, wifi_qr)
+                    if not should_return_via_fade:
+                        current_screen = blend_sequence(display, current_screen, wifi_qr)
                     portal_until = 0.0
                 continue
 
