@@ -64,9 +64,9 @@ On a phone, open the host's LAN address with port `8009`.
 - Upload and processing lifecycle events are appended to `data/events.ndjson`.
 - GPS EXIF metadata is checked after upload; the UI shows whether GPS was found.
 - A bottom-left map tab uses Leaflet to plot GPS-tagged uploads.
-- If `data/maps/florida.pmtiles` is present, the UI exposes an offline Florida vector basemap.
+- On startup, Canopticon will fetch/build the configured offline state PMTiles bundle into `data/maps/` if it is missing.
 - A live OpenStreetMap fallback remains available when the Pi has internet uplink.
-- Extraction notes for the current Florida bundle live in [docs/offline-maps.md](/home/segger/Projects/Canopticon/docs/offline-maps.md).
+- Extraction notes for the current state bundle live in [docs/offline-maps.md](/home/segger/Projects/Canopticon/docs/offline-maps.md).
 - Map pins show the occlusion percentage and open the processed photo when tapped.
 - When zoomed out, nearby map pins combine and show the average occlusion percentage for that area.
 

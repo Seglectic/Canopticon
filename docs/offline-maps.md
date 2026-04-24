@@ -1,11 +1,12 @@
 # Offline Maps
 
 The web UI can use a local PMTiles basemap when one is present in `data/maps/`.
+Canopticon now auto-builds the configured state bundle on startup when it is missing.
 
 ## Current setup
 
-- Primary statewide file: `data/maps/florida.pmtiles`
-- Current statewide Florida target:
+- Primary statewide file for the default configuration: `data/maps/florida.pmtiles`
+- Current default Florida target:
   - Bounding box: `-87.7,24.3,-79.8,31.1`
   - Max zoom: `15`
 

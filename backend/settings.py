@@ -14,6 +14,8 @@ RESULT_DIR = DATA_DIR / "results"
 MAPS_DIR = DATA_DIR / "maps"
 EVENT_LOG = DATA_DIR / "events.ndjson"
 DEFAULT_THUMBNAIL_SIZE = 200
+DEFAULT_MAP_STATE = "florida"
+PROTOMAPS_BUILD_URL = "https://build.protomaps.com/20260423.pmtiles"
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
 
@@ -32,3 +34,4 @@ class WebConfig:
     event_log: Path
     maps_dir: Path
     thumbnail_size: int
+    map_state: str

@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 import onnxruntime as ort
 
 from .inference import load_model, process_image_file, warm_model
+from .maps import ensure_state_map, state_map_config
 from .models import ImageItem, item_to_payload
 from .settings import SUPPORTED_EXTS, WebConfig
 from .storage import (
@@ -488,30 +489,40 @@ def media_response(directory: Path, filename: str) -> FileResponse:
 
 
 def build_map_sources(state: WebState) -> tuple[list[dict[str, Any]], str]:
-    florida_pmtiles = state.maps_dir / "florida.pmtiles"
-    if not florida_pmtiles.exists():
-        return [], "offline-florida"
+    map_config = state_map_config(state.config.map_state)
+    if map_config is None:
+        return [], "offline-map"
+    offline_pmtiles = state.maps_dir / map_config.filename
+    if not offline_pmtiles.exists():
+        return [], f"offline-{map_config.slug}"
 
     return (
         [
             {
-                "id": "offline-florida",
-                "label": "Offline Florida",
+                "id": f"offline-{map_config.slug}",
+                "label": map_config.label,
                 "kind": "pmtiles",
-                "url": f"/maps/{florida_pmtiles.name}",
+                "url": f"/maps/{offline_pmtiles.name}",
                 "default": True,
-                "bounds": [[24.3, -87.7], [31.1, -79.8]],
-                "center": [27.8, -81.7],
-                "zoom": 6,
-                "max_zoom": 15,
+                "bounds": [
+                    [map_config.bounds[1], map_config.bounds[0]],
+                    [map_config.bounds[3], map_config.bounds[2]],
+                ],
+                "center": [map_config.center[0], map_config.center[1]],
+                "zoom": map_config.zoom,
+                "max_zoom": map_config.max_zoom,
             }
         ],
-        "offline-florida",
+        f"offline-{map_config.slug}",
     )
 
 
 def create_app(config: WebConfig) -> FastAPI:
     state = WebState(config)
+    config.frontend_dir.mkdir(parents=True, exist_ok=True)
+    config.ingest_dir.mkdir(parents=True, exist_ok=True)
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    config.maps_dir.mkdir(parents=True, exist_ok=True)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -522,6 +533,24 @@ def create_app(config: WebConfig) -> FastAPI:
         state.maps_dir.mkdir(parents=True, exist_ok=True)
         state.loop = asyncio.get_running_loop()
         log_event(state.event_log, "startup")
+        try:
+            offline_map = await asyncio.to_thread(ensure_state_map, state.maps_dir, state.config.map_state)
+        except Exception as exc:
+            log_event(
+                state.event_log,
+                "map_prepare_error",
+                map_state=state.config.map_state,
+                error=str(exc),
+            )
+            print(f"Offline map preparation failed: {exc}", flush=True)
+        else:
+            if offline_map is not None:
+                log_event(
+                    state.event_log,
+                    "map_ready",
+                    map_state=state.config.map_state,
+                    path=str(offline_map),
+                )
         state.session = await asyncio.to_thread(load_model, config.model_path, config.device)
         await asyncio.to_thread(warm_model, state.session)
         index_existing_uploads(state)

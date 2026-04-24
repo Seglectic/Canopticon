@@ -33,6 +33,7 @@ let markerLayer;
 let heatCanvas;
 let lastMapFitKey = "";
 let baseLayer;
+let mapConfig = null;
 let controlsCollapsed = false;
 let noticeTimeout;
 let activeViewerItemId = null;
@@ -199,6 +200,14 @@ function mapLatLngFromTouch(touch) {
 function coordsText(item) {
   if (!itemHasGps(item)) return "";
   return `${Number(item.gps_latitude).toFixed(5)}, ${Number(item.gps_longitude).toFixed(5)}`;
+}
+
+async function loadMapConfig() {
+  const response = await fetch("/api/map-config");
+  if (!response.ok) {
+    throw new Error("Map configuration failed to load");
+  }
+  mapConfig = await response.json();
 }
 
 function occlusionText(item) {
@@ -427,10 +436,15 @@ function ensureMap() {
     mapTouchTracking = false;
     setMapCoords(null);
   }, { passive: true });
-  map.setView([20, 0], 2);
-  if (!baseLayer) {
+  const offlineSource = mapConfig?.sources?.find((source) => source.default) || mapConfig?.sources?.[0];
+  if (offlineSource) {
+    map.setView(offlineSource.center, offlineSource.zoom);
+  } else {
+    map.setView([20, 0], 2);
+  }
+  if (!baseLayer && offlineSource) {
     baseLayer = protomapsL.leafletLayer({
-      url: "/maps/florida.pmtiles",
+      url: offlineSource.url,
       flavor: "light",
       lang: "en",
       noWrap: true,
@@ -718,7 +732,7 @@ input.addEventListener("change", async () => {
   render();
 });
 
-const startup = loadItems().catch(() => {
+const startup = Promise.all([loadMapConfig(), loadItems()]).catch(() => {
   flashNotice("Initial load failed");
 });
 

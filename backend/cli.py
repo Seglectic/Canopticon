@@ -8,6 +8,7 @@ import uvicorn
 from .inference import process_folder
 from .settings import (
     DATA_DIR,
+    DEFAULT_MAP_STATE,
     DEFAULT_PORT,
     DEFAULT_THUMBNAIL_SIZE,
     EVENT_LOG,
@@ -74,6 +75,7 @@ def serve(args: argparse.Namespace) -> None:
         event_log=args.event_log,
         maps_dir=args.maps_dir,
         thumbnail_size=args.thumbnail_size,
+        map_state=args.map_state,
     )
     app = create_app(config)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
@@ -117,6 +119,12 @@ def main() -> None:
         type=Path,
         default=MAPS_DIR,
         help="Directory for offline map assets such as PMTiles files",
+    )
+    serve_parser.add_argument(
+        "--map-state",
+        type=str,
+        default=DEFAULT_MAP_STATE,
+        help="US state slug to fetch/build for the offline PMTiles basemap",
     )
     serve_parser.add_argument(
         "--thumbnail-size",
