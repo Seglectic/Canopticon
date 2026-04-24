@@ -30,6 +30,7 @@ DISPLAY_RST_PIN = 27
 DISPLAY_MADCTL = 0x08
 BUTTON_PIN = 23
 BUTTON_DEBOUNCE_SEC = 0.18
+BUTTON_BOUNCE_MS = 180
 SAFE_MARGIN = 20
 CAPTION_TOP = 193
 QR_BOX_SIZE = 152
@@ -245,12 +246,14 @@ def build_qr_image(
     background: tuple[int, int, int],
     caption: str,
     text_fill: tuple[int, int, int],
+    qr_background: tuple[int, int, int] | None = None,
 ) -> Image.Image:
     canvas = Image.new("RGB", (DISPLAY_SIZE, DISPLAY_SIZE), background)
     qr = qrcode.QRCode(border=1, box_size=8)
     qr.add_data(payload)
     qr.make(fit=True)
-    qr_image = qr.make_image(fill_color="black", back_color=background).convert("RGB")
+    qr_back_color = qr_background if qr_background is not None else background
+    qr_image = qr.make_image(fill_color="black", back_color=qr_back_color).convert("RGB")
     qr_image = qr_image.resize((QR_BOX_SIZE, QR_BOX_SIZE), Image.Resampling.NEAREST)
     qr_x = (DISPLAY_SIZE - QR_BOX_SIZE) // 2
     qr_y = SAFE_MARGIN + 6
@@ -537,6 +540,18 @@ def main() -> None:
     GPIO.setwarnings(False)
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    button_press_pending = 0
+
+    def on_button_press(_channel: int) -> None:
+        nonlocal button_press_pending
+        button_press_pending += 1
+
+    GPIO.add_event_detect(
+        BUTTON_PIN,
+        GPIO.FALLING,
+        callback=on_button_press,
+        bouncetime=BUTTON_BOUNCE_MS,
+    )
 
     display = GC9A01Display()
     leds = LedController()
@@ -554,6 +569,7 @@ def main() -> None:
         background=PORTAL_BACKGROUND,
         caption="Web Portal",
         text_fill=(255, 255, 255),
+        qr_background=(255, 255, 255),
     )
     known_clients: set[tuple[str, str]] = set()
     last_client_poll = 0.0
@@ -562,7 +578,6 @@ def main() -> None:
     portal_until = 0.0
     mode = "boot"
     last_button_press = 0.0
-    previous_button_pressed = False
     boot_started_at = time.monotonic()
     boot_ready_logged = False
     current_screen = build_boot_frame(0.0)
@@ -595,14 +610,12 @@ def main() -> None:
                 time.sleep(0.05)
                 continue
 
-            button_pressed = GPIO.input(BUTTON_PIN) == GPIO.LOW
             button_activated = (
-                button_pressed
-                and not previous_button_pressed
+                button_press_pending > 0
                 and (now - last_button_press) >= BUTTON_DEBOUNCE_SEC
             )
-            previous_button_pressed = button_pressed
             if button_activated:
+                button_press_pending = max(0, button_press_pending - 1)
                 last_button_press = now
                 last_button_activity = time.monotonic()
                 if sleeping:
@@ -735,6 +748,7 @@ def main() -> None:
         leds.off()
         if preview is not None:
             preview.close()
+        GPIO.remove_event_detect(BUTTON_PIN)
         display.close()
         GPIO.cleanup()
 
