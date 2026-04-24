@@ -7,7 +7,7 @@ from pathlib import Path
 CPU_PROVIDER = "CPUExecutionProvider"
 DEFAULT_PORT = 8009
 DATA_DIR = Path("data")
-CLIENT_DIR = Path("client")
+FRONTEND_DIR = Path("frontend")
 INGEST_DIR = DATA_DIR / "ingest"
 UPLOAD_DIR = DATA_DIR / "uploads"
 RESULT_DIR = DATA_DIR / "results"
@@ -27,6 +27,6 @@ class WebConfig:
     scale: float
     data_dir: Path
     ingest_dir: Path
-    client_dir: Path
+    frontend_dir: Path
     event_log: Path
     maps_dir: Path

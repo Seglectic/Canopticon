@@ -72,11 +72,11 @@ On a phone, open the host's LAN address with port `8009`.
 
 ## Web UI files
 
-The frontend lives in [`client/`](./client/) so the UI can be maintained without editing the Python server:
+The frontend lives in [`frontend/`](./frontend/) so the UI can be maintained without editing the Python server:
 
-- `client/index.html`
-- `client/styles.css`
-- `client/app.js`
+- `frontend/index.html`
+- `frontend/styles.css`
+- `frontend/app.js`
 
 ## Shutdown behavior
 

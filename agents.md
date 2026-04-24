@@ -79,7 +79,7 @@ The intended way forward is a self-hosted Pi appliance with a mobile-first web U
 - Explicit server command:
   - `uv run python canopticon.py serve --port 8009`
 - The app binds `0.0.0.0:8009` by default.
-- Frontend files live in [client/](/home/segger/Projects/Canopticon/client).
+- Frontend files live in [frontend/](/home/segger/Projects/Canopticon/frontend).
 - The frontend uses Leaflet with OpenStreetMap tiles for the map tab.
 - The web UI now vendors its map JS/CSS locally so the map screen itself still loads without internet.
 - If `data/maps/florida.pmtiles` exists, the map tab offers an offline Florida vector basemap and defaults to it.

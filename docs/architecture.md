@@ -16,7 +16,7 @@
   - application datamodels like `ImageItem`
 - `backend/settings.py`
   - shared constants and web config
-- `client/`
+- `frontend/`
   - static web UI
 
 ## Runtime Flow
@@ -27,7 +27,7 @@ Browser / Phone
     v
 FastAPI routes in web.py
     |
-    +--> GET /                -> serves client/index.html
+    +--> GET /                -> serves frontend/index.html
     +--> GET /api/items       -> returns current in-memory item snapshot
     +--> POST /api/upload     -> saves upload to ingest, hashes file, extracts GPS
     +--> GET /media/...       -> serves originals and overlays
@@ -131,7 +131,7 @@ ImageItem stores gps_present / latitude / longitude
 /api/items and websocket snapshot include coordinates
     |
     v
-client/app.js renders map pins and cluster summaries
+frontend/app.js renders map pins and cluster summaries
 ```
 
 ## Notes

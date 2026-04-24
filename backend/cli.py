@@ -6,7 +6,7 @@ from pathlib import Path
 import uvicorn
 
 from .inference import process_folder
-from .settings import CLIENT_DIR, DATA_DIR, DEFAULT_PORT, EVENT_LOG, INGEST_DIR, MAPS_DIR, WebConfig
+from .settings import DATA_DIR, DEFAULT_PORT, EVENT_LOG, FRONTEND_DIR, INGEST_DIR, MAPS_DIR, WebConfig
 from .web import create_app
 
 
@@ -59,7 +59,7 @@ def serve(args: argparse.Namespace) -> None:
         scale=args.scale,
         data_dir=args.data_dir,
         ingest_dir=args.ingest_dir,
-        client_dir=args.client_dir,
+        frontend_dir=args.frontend_dir,
         event_log=args.event_log,
         maps_dir=args.maps_dir,
     )
@@ -89,9 +89,9 @@ def main() -> None:
         help="Directory for raw uploaded files before hash dedupe",
     )
     serve_parser.add_argument(
-        "--client-dir",
+        "--frontend-dir",
         type=Path,
-        default=CLIENT_DIR,
+        default=FRONTEND_DIR,
         help="Directory for web UI assets",
     )
     serve_parser.add_argument(

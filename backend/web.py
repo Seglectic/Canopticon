@@ -232,7 +232,7 @@ async def handle_gpio_capture(state: WebState) -> None:
 
 
 def start_gpio_trigger_helper(state: WebState) -> None:
-    helper_path = Path(__file__).resolve().parent.parent / "tools" / "gpio_trigger_helper.py"
+    helper_path = Path(__file__).resolve().parent.parent / "device" / "gpio_trigger_helper.py"
     if not helper_path.exists():
         log_event(state.event_log, "capture_trigger_unavailable", error="GPIO helper script is missing")
         return
@@ -462,7 +462,7 @@ def create_app(config: WebConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        config.client_dir.mkdir(parents=True, exist_ok=True)
+        config.frontend_dir.mkdir(parents=True, exist_ok=True)
         state.ingest_dir.mkdir(parents=True, exist_ok=True)
         state.upload_dir.mkdir(parents=True, exist_ok=True)
         state.result_dir.mkdir(parents=True, exist_ok=True)
@@ -504,12 +504,12 @@ def create_app(config: WebConfig) -> FastAPI:
             print("Canopticon shutdown complete.", flush=True)
 
     app = FastAPI(title="Canopticon", lifespan=lifespan)
-    app.mount("/client", StaticFiles(directory=config.client_dir), name="client")
+    app.mount("/frontend", StaticFiles(directory=config.frontend_dir), name="frontend")
     app.mount("/maps", StaticFiles(directory=config.maps_dir), name="maps")
 
     @app.get("/")
     async def index() -> FileResponse:
-        return FileResponse(config.client_dir / "index.html")
+        return FileResponse(config.frontend_dir / "index.html")
 
     @app.get("/api/items")
     async def get_items() -> JSONResponse:
