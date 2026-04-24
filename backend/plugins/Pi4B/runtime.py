@@ -43,6 +43,7 @@ WIFI_BACKGROUND = (255, 255, 255)
 PORTAL_BACKGROUND = (11, 72, 132)
 BOOT_BACKGROUND = (244, 247, 251)
 PROCESSING_POLL_INTERVAL_SEC = 0.8
+CLIENT_POLL_INTERVAL_SEC = 1.0
 SLEEP_TIMEOUT_SEC = 120.0
 
 BASE_URL = os.environ["CANOPTICON_PLUGIN_BASE_URL"]
@@ -526,6 +527,8 @@ def main() -> None:
         text_fill=(255, 255, 255),
     )
     known_clients = current_clients()
+    last_client_poll = 0.0
+    latest_clients = known_clients
     portal_until = 0.0
     mode = "boot"
     last_button_press = 0.0
@@ -658,8 +661,11 @@ def main() -> None:
                 time.sleep(0.03)
                 continue
 
-            clients = current_clients()
-            new_clients = clients - known_clients
+            if now - last_client_poll >= CLIENT_POLL_INTERVAL_SEC:
+                last_client_poll = now
+                latest_clients = current_clients()
+
+            new_clients = latest_clients - known_clients
             if new_clients:
                 known_clients |= new_clients
                 portal_until = time.monotonic() + 10.0
