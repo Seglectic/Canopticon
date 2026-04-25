@@ -77,6 +77,8 @@ def serve(args: argparse.Namespace) -> None:
         thumbnail_size=args.thumbnail_size,
         map_state=args.map_state,
         plugin=args.plugin,
+        plugin_camera_rotation=args.plugin_camera_rotation,
+        plugin_led_brightness=args.plugin_led_brightness,
     )
     app = create_app(config)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
@@ -138,6 +140,19 @@ def main() -> None:
         type=str,
         default=None,
         help="Optional hardware plugin folder name from backend/plugins, for example Pi4B",
+    )
+    serve_parser.add_argument(
+        "--plugin-camera-rotation",
+        type=int,
+        choices=[0, 90, 180, 270],
+        default=0,
+        help="Rotate the plugin camera feed by this many degrees (0, 90, 180, 270)",
+    )
+    serve_parser.add_argument(
+        "--plugin-led-brightness",
+        type=int,
+        default=96,
+        help="Max LED brightness for the plugin hardware (0-255)",
     )
     add_processing_options(serve_parser)
 

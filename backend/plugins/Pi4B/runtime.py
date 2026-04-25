@@ -53,7 +53,7 @@ BUTTON_HOLD_SEC = 2.0
 IDLE_LOOP_DELAY_SEC = 0.05
 IRIS_STEPS = 14
 IRIS_FRAME_DELAY_SEC = 0.03
-BRAND_HOLD_SEC = 3.0
+BRAND_HOLD_SEC = 2.5
 
 BASE_URL = os.environ["CANOPTICON_PLUGIN_BASE_URL"]
 CAPTURE_URL = os.environ["CANOPTICON_PLUGIN_CAPTURE_URL"]
@@ -64,6 +64,8 @@ AP_INTERFACE = os.environ.get("CANOPTICON_PLUGIN_AP_INTERFACE", "wlan0")
 EVENT_LOG = Path(os.environ.get("CANOPTICON_PLUGIN_EVENT_LOG", "data/events.ndjson"))
 PLUGIN_ID = os.environ.get("CANOPTICON_PLUGIN_ID", "Pi4B")
 FRONTEND_DIR = Path(os.environ.get("CANOPTICON_PLUGIN_FRONTEND_DIR", "frontend"))
+CAMERA_ROTATION = int(os.environ.get("CANOPTICON_PLUGIN_CAMERA_ROTATION", "270"))
+LED_BRIGHTNESS = int(os.environ.get("CANOPTICON_PLUGIN_LED_BRIGHTNESS", "120"))
 LED_HELPER_PATH = Path(__file__).with_name("led_helper.py")
 LEASES_PATH = Path(f"/var/lib/NetworkManager/dnsmasq-{AP_INTERFACE}.leases")
 
@@ -194,7 +196,9 @@ class CameraPreview:
         time.sleep(0.4)
 
     def read(self) -> np.ndarray:
-        return np.rot90(self.camera.capture_array("main"), 2)
+        frame = self.camera.capture_array("main")
+        k = CAMERA_ROTATION // 90
+        return np.rot90(frame, k) if k else frame
 
     def close(self) -> None:
         self.camera.stop()
@@ -427,7 +431,7 @@ class LedController:
             return None
         try:
             return subprocess.Popen(
-                ["sudo", "-n", "/usr/bin/python3", str(LED_HELPER_PATH), command],
+                ["sudo", "-n", "/usr/bin/python3", str(LED_HELPER_PATH), command, str(LED_BRIGHTNESS)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )

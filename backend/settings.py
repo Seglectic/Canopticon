@@ -36,3 +36,5 @@ class WebConfig:
     thumbnail_size: int
     map_state: str
     plugin: str | None
+    plugin_camera_rotation: int = 0
+    plugin_led_brightness: int = 96

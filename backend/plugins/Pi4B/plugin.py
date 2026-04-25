@@ -29,6 +29,8 @@ class Pi4BPlugin(ManagedPlugin):
             "CANOPTICON_PLUGIN_EVENT_LOG": str(context.event_log),
             "CANOPTICON_PLUGIN_ID": self.plugin_id,
             "CANOPTICON_PLUGIN_FRONTEND_DIR": str(context.config.frontend_dir),
+            "CANOPTICON_PLUGIN_CAMERA_ROTATION": str(context.config.plugin_camera_rotation),
+            "CANOPTICON_PLUGIN_LED_BRIGHTNESS": str(context.config.plugin_led_brightness),
         }
         self.process = subprocess.Popen(
             ["/usr/bin/python3", str(runtime_path)],

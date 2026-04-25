@@ -14,7 +14,7 @@ LED_COUNT = 10
 LED_PIN = 18
 LED_FREQ_HZ = 800_000
 LED_DMA = 10
-LED_BRIGHTNESS = 96
+LED_BRIGHTNESS = int(sys.argv[2]) if len(sys.argv) > 2 else 96
 LED_INVERT = False
 LED_CHANNEL = 0
 
