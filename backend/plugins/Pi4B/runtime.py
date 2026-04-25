@@ -48,6 +48,8 @@ IRIS_OVERLAY = (8, 10, 16)
 PROCESSING_POLL_INTERVAL_SEC = 0.8
 CLIENT_POLL_INTERVAL_SEC = 1.0
 SLEEP_TIMEOUT_SEC = 120.0
+PREVIEW_TIMEOUT_SEC = 60.0
+BUTTON_HOLD_SEC = 2.0
 IDLE_LOOP_DELAY_SEC = 0.05
 IRIS_STEPS = 14
 IRIS_FRAME_DELAY_SEC = 0.03
@@ -192,7 +194,7 @@ class CameraPreview:
         time.sleep(0.4)
 
     def read(self) -> np.ndarray:
-        return self.camera.capture_array("main")
+        return np.rot90(self.camera.capture_array("main"), 2)
 
     def close(self) -> None:
         self.camera.stop()
@@ -611,11 +613,14 @@ def main() -> None:
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     button_press_pending = 0
+    button_down_at = 0.0
+    preview_started_at = 0.0
     use_gpio_event_detect = False
 
     def on_button_press(_channel: int) -> None:
-        nonlocal button_press_pending
+        nonlocal button_press_pending, button_down_at
         button_press_pending += 1
+        button_down_at = time.monotonic()
 
     try:
         GPIO.add_event_detect(
@@ -692,7 +697,23 @@ def main() -> None:
                 button_pressed = GPIO.input(BUTTON_PIN) == GPIO.LOW
                 if button_pressed and not previous_button_pressed:
                     button_press_pending += 1
+                    button_down_at = now
                 previous_button_pressed = button_pressed
+
+            if GPIO.input(BUTTON_PIN) != GPIO.LOW:
+                button_down_at = 0.0
+
+            if mode == "preview" and button_down_at > 0 and now - button_down_at >= BUTTON_HOLD_SEC:
+                button_press_pending = 0
+                button_down_at = 0.0
+                last_button_activity = now
+                if preview is not None:
+                    preview.close()
+                    preview = None
+                mode = "wifi"
+                log_event("plugin_preview_exit_hold")
+                current_screen = blend_sequence(display, current_screen, wifi_qr)
+                continue
 
             button_activated = button_press_pending > 0 and (now - last_button_press) >= BUTTON_DEBOUNCE_SEC
             if button_activated:
@@ -751,6 +772,7 @@ def main() -> None:
                     if preview is None:
                         preview = CameraPreview()
                     mode = "preview"
+                    preview_started_at = now
                     log_event("plugin_photo_mode_started")
                 else:
                     frame = preview.read()
@@ -759,8 +781,8 @@ def main() -> None:
                     display.show_image(current_screen)
                     image_bytes = encode_jpeg(frame)
                     filename = f"pi4b-{datetime.now().strftime('%Y%m%d-%H%M%S')}.jpg"
-                    should_return_via_fade = True
-                    current_screen = play_capture_success_sequence(display, frame, wifi_qr)
+                    preview_frame = annotate_preview(frame)
+                    current_screen = play_capture_success_sequence(display, frame, preview_frame)
                     try:
                         response = post_capture(image_bytes, filename)
                     except error.URLError as exc:
@@ -768,25 +790,30 @@ def main() -> None:
                         current_screen = status_card((255, 228, 228), "Capture Failed", "Check Canopticon app")
                         display.show_image(current_screen)
                         time.sleep(1.5)
-                        should_return_via_fade = False
+                        current_screen = blend_sequence(display, current_screen, preview_frame)
                     else:
                         log_event("plugin_capture_posted", filename=filename, response=response)
                         if response.get("duplicate"):
                             current_screen = status_card((255, 244, 214), "Duplicate", filename)
                             display.show_image(current_screen)
                             time.sleep(1.2)
-                            should_return_via_fade = False
-                    preview.close()
-                    preview = None
-                    mode = "wifi"
-                    if not should_return_via_fade:
-                        current_screen = blend_sequence(display, current_screen, wifi_qr)
+                            current_screen = blend_sequence(display, current_screen, preview_frame)
+                    mode = "preview"
+                    preview_started_at = now
                     portal_until = 0.0
                 continue
 
             if mode == "preview":
                 if preview is None:
                     preview = CameraPreview()
+                    preview_started_at = now
+                if now - preview_started_at >= PREVIEW_TIMEOUT_SEC:
+                    preview.close()
+                    preview = None
+                    mode = "wifi"
+                    log_event("plugin_preview_timeout")
+                    current_screen = blend_sequence(display, current_screen, wifi_qr)
+                    continue
                 frame = preview.read()
                 current_screen = annotate_preview(frame)
                 display.show_image(current_screen)
