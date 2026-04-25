@@ -612,15 +612,15 @@ def main() -> None:
     GPIO.setwarnings(False)
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    button_press_pending = 0
     button_down_at = 0.0
     preview_started_at = 0.0
     use_gpio_event_detect = False
 
     def on_button_press(_channel: int) -> None:
-        nonlocal button_press_pending, button_down_at
-        button_press_pending += 1
-        button_down_at = time.monotonic()
+        nonlocal button_down_at
+        t = time.monotonic()
+        if t - last_button_press >= BUTTON_DEBOUNCE_SEC:
+            button_down_at = t
 
     try:
         GPIO.add_event_detect(
@@ -693,18 +693,16 @@ def main() -> None:
                 time.sleep(0.05)
                 continue
 
-            if not use_gpio_event_detect:
-                button_pressed = GPIO.input(BUTTON_PIN) == GPIO.LOW
-                if button_pressed and not previous_button_pressed:
-                    button_press_pending += 1
+            button_is_down = GPIO.input(BUTTON_PIN) == GPIO.LOW
+
+            if not use_gpio_event_detect and button_is_down and not previous_button_pressed:
+                if now - last_button_press >= BUTTON_DEBOUNCE_SEC:
                     button_down_at = now
-                previous_button_pressed = button_pressed
+            previous_button_pressed = button_is_down
 
-            if GPIO.input(BUTTON_PIN) != GPIO.LOW:
-                button_down_at = 0.0
+            button_triggered = not button_is_down and button_down_at > 0 and now - button_down_at < BUTTON_HOLD_SEC
 
-            if mode == "preview" and button_down_at > 0 and now - button_down_at >= BUTTON_HOLD_SEC:
-                button_press_pending = 0
+            if mode == "preview" and button_is_down and button_down_at > 0 and now - button_down_at >= BUTTON_HOLD_SEC:
                 button_down_at = 0.0
                 last_button_activity = now
                 if preview is not None:
@@ -715,11 +713,12 @@ def main() -> None:
                 current_screen = blend_sequence(display, current_screen, wifi_qr)
                 continue
 
-            button_activated = button_press_pending > 0 and (now - last_button_press) >= BUTTON_DEBOUNCE_SEC
-            if button_activated:
-                button_press_pending = max(0, button_press_pending - 1)
+            if not button_is_down:
+                button_down_at = 0.0
+
+            if button_triggered:
                 last_button_press = now
-                last_button_activity = time.monotonic()
+                last_button_activity = now
                 if sleeping:
                     sleeping = False
                     mode = "wifi"
@@ -767,7 +766,7 @@ def main() -> None:
                 time.sleep(0.1)
                 continue
 
-            if button_activated:
+            if button_triggered:
                 if mode != "preview":
                     if preview is None:
                         preview = CameraPreview()
